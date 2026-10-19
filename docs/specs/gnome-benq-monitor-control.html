@@ -71,7 +71,9 @@ asynchronously, so the shell never blocks on the I²C bus.</p>
   <tr><td><code>lib/sun.js</code>, <code>lib/scheduler.js</code>, <code>lib/scenario.js</code></td><td>NOAA sun times, active/next scenario, JSON validation (same format as the KDE app).</td><td>no</td></tr>
   <tr><td><code>lib/flow.js</code></td><td>Scenario activation, 60 s tick, clock-jump detection, retry after reconnect.</td><td>no (GLib)</td></tr>
   <tr><td><code>lib/i18n.js</code></td><td>Lookup table translations (EN source strings, DE table).</td><td>no</td></tr>
+  <tr><td><code>lib/brightnessKeys.js</code></td><td>Brightness key step (1/20 of the maximum, clamped), routing (GNOME only, monitor only, both), DRM → Meta connector name.</td><td>no</td></tr>
   <tr><td><code>ui/indicator.js</code></td><td>Top-bar button and menu.</td><td>yes</td></tr>
+  <tr><td><code>ui/brightnessKeys.js</code></td><td>Takes over and restores GNOME's screen brightness keybindings, pointer monitor lookup, combined OSD.</td><td>yes</td></tr>
   <tr><td><code>extension.js</code></td><td>Wiring: settings, monitor hotplug, resume, lock screen, notifications.</td><td>yes</td></tr>
   <tr><td><code>prefs.js</code></td><td>Adw preferences.</td><td>no (Gtk/Adw)</td></tr>
 </table>
@@ -118,8 +120,9 @@ write except input is verified by ddcutil's read-back, input switches need confi
 
 <h2>7. Verification</h2>
 <ul class="check">
-  <li><input type="checkbox" checked disabled> Unit tests for parsers, sun times (against the Python implementation), scheduler, scenario validation, session.</li>
+  <li><input type="checkbox" checked disabled> Unit tests for parsers, sun times (against the Python implementation), scheduler, scenario validation, session, brightness key step and routing.</li>
   <li><input type="checkbox" checked disabled> Live: menu controls on the MA320U after log-out/in (2026-10-19).</li>
+  <li><input type="checkbox" checked disabled> Live: brightness keys change the MA320U after log-out/in (2026-10-19).</li>
   <li><input type="checkbox" disabled> Live: scheduled scenario fires, re-apply after resume.</li>
 </ul>
 </body>

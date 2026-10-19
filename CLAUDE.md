@@ -13,6 +13,9 @@ Design: `docs/specs/gnome-benq-monitor-control.html`.
   `monitors-changed`, resume via LoginManager `prepare-for-sleep`, lock screen via session modes
   `user` + `unlock-dialog`, indicator hidden while locked). `prefs.js`: Adw, scenario editor saves
   every edit to the `scenarios` GSettings key.
+- Brightness keys: `ui/brightnessKeys.js` replaces GNOME's `screen-brightness-*` keybindings (owned by
+  `Main.brightnessManager`), calls GNOME's handler first, then steps VCP 0x10; restores GNOME's handlers
+  on disable. Pure step/routing logic in `lib/brightnessKeys.js`. Setting `brightness-keys`.
 - i18n: lookup tables keyed by English text (`lib/i18n-de.js`), no gettext (msgfmt not installed).
   Add new UI strings to the DE table.
 - Verify shell APIs against the installed shell: `gresource extract /usr/lib/gnome-shell/libshell-18.so /org/gnome/shell/ui/popupMenu.js`.

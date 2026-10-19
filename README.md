@@ -3,7 +3,8 @@
 A GNOME Shell extension that controls the **BenQ MA320U** over DDC/CI from the top bar:
 picture modes, brightness, volume, input source, Low Blue Light, Brightness Intelligence,
 and **FloW scenarios**, which are named sets of monitor settings that apply by hand or on
-a daily schedule (fixed time, sunrise or sunset).
+a daily schedule (fixed time, sunrise or sunset). The laptop's **brightness keys** change
+the monitor too.
 
 **Why this exists:** the MA320U's on-screen menu only offers brightness, input and volume.
 Its picture modes and eye-care settings can be reached only through BenQ's *Display Pilot 2*
@@ -40,11 +41,6 @@ is locked in sRGB and Display P3, and an HDR signal locks picture mode, brightne
 eye-care settings. If the monitor rejects a write, the control snaps back and stays locked
 in that mode for the rest of the session.
 
-**Brightness keys:** the laptop's Fn brightness keys also change the monitor (steps of 5 %,
-with GNOME's on-screen display). It works while the laptop screen is off, too. Shift + key
-changes only the screen under the pointer. Turn it off in the preferences
-(*Brightness keys control the monitor*); GNOME's own keys then work as before.
-
 **Brightness Intelligence** is BenQ's automatic brightness. The MA320U has a built-in
 ambient light sensor and adjusts its brightness to the room light over the day. While it is
 on, the monitor may override the brightness slider; the slider follows the next time the
@@ -53,6 +49,21 @@ menu opens.
 **Night Light hint:** GNOME Night Light warms the picture before it leaves the computer, and
 the monitor's Low Blue Light filters blue inside the monitor. While both are active they add
 up, and the menu says so.
+
+### Brightness keys
+
+GNOME's brightness keys only reach screens with a backlight it controls, which is the laptop
+panel. The extension adds the monitor (steps of 5 %, with GNOME's on-screen display):
+
+| Situation | Fn + brightness key | Shift + Fn + brightness key |
+|---|---|---|
+| Only the monitor is on (laptop lid closed or panel off) | Monitor | Monitor |
+| Laptop panel and monitor are on | Both | Only the screen under the pointer |
+| Monitor not reachable, or brightness locked by HDR | Laptop panel only, as in plain GNOME | Laptop panel only |
+
+Holding a key sends only the latest value to the monitor. The keys also work on the lock
+screen. Turn this off in the preferences (*Brightness keys control the monitor*); disabling
+it or the extension gives the keys back to GNOME unchanged.
 
 ### FloW scenarios
 
@@ -115,6 +126,12 @@ The monitor icon appears in the top bar. It is dimmed while the monitor is not r
 - **Reading:** when the menu opens, and then every *sync interval* seconds (default 5) while
   it stays open. Nothing is polled while the menu is closed, so the extension costs nothing
   in the background on battery.
+- **Brightness keys:** the extension replaces GNOME Shell's four screen brightness
+  keybindings (`screen-brightness-up/down` and their Shift variants `-monitor`) with its
+  own. Each press first runs GNOME's original handler, which steps the laptop panel, then
+  steps the monitor's brightness (VCP 0x10) from the latest target value. The monitor is
+  matched to its screen by connector (`ddcutil detect` reports `card1-DP-1`, GNOME calls it
+  `DP-1`), so the on-screen display appears on the right screen. The cycle keys stay GNOME's.
 - **Storage:** GSettings (`org.gnome.shell.extensions.benq-monitor-control`). The `scenarios`
   key holds the same JSON as the KDE app's `scenarios.json`.
 - **Privacy:** no network access, no account, no telemetry.
@@ -152,13 +169,14 @@ Logs: `journalctl -b /usr/bin/gnome-shell | grep benq-monitor-control`
 
 ## Development
 
-    gjs -m tests/run.js     # unit tests: parsers, session, scheduler, sun times, scenarios
+    gjs -m tests/run.js     # unit tests: parsers, session, scheduler, sun times, scenarios, brightness keys
     ./install.sh            # copy to ~/.local/share/gnome-shell/extensions, then log out/in
 
 | Path | Content |
 |---|---|
-| `extension/lib/` | Logic without shell imports (GLib/Gio only), so it runs under plain `gjs`: ddcutil runner and parsers, monitor session and controller, FloW scheduler, sun times, translations. |
+| `extension/lib/` | Logic without shell imports (GLib/Gio only), so it runs under plain `gjs`: ddcutil runner and parsers, monitor session and controller, FloW scheduler, sun times, brightness key step and routing (`brightnessKeys.js`), translations. |
 | `extension/ui/indicator.js` | The top-bar button and menu. |
+| `extension/ui/brightnessKeys.js` | Takes over GNOME's brightness keybindings and gives them back; on-screen display. |
 | `extension/extension.js` | Wiring: hotplug, resume, lock screen, notifications. |
 | `extension/prefs.js` | Preferences (libadwaita). |
 | `docs/specs/` | Design notes, including the differences from the KDE app. |
