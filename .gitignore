@@ -1,3 +1,7 @@
 extension/schemas/gschemas.compiled
 dist/
 *.zip
+
+# Local tooling (generated graph, per-machine Claude settings)
+graphify-out/
+.claude/
