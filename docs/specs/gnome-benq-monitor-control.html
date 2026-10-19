@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gnome-benq-monitor-control — Design Spec</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d2125; --muted: #5f6873; --border: #d8dde3;
+    --code-bg: #f3f5f7; --accent: #2f6fde; --th-bg: #eef1f5;
+    --note-bg: #fff6e0; --note-border: #e6b84a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16191d; --fg: #e3e6ea; --muted: #9aa3ad; --border: #333a42;
+      --code-bg: #20252b; --accent: #7aa7ff; --th-bg: #1f242a;
+      --note-bg: #2d2615; --note-border: #8a6d22;
+    }
+  }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, sans-serif;
+         max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+  h2 { margin-top: 2em; padding-bottom: .25em; border-bottom: 1px solid var(--border); }
+  .meta { color: var(--muted); font-size: .92em; }
+  a { color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; margin: .8em 0; font-size: .94em; }
+  th, td { border: 1px solid var(--border); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--th-bg); }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: .92em; }
+  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .note { background: var(--note-bg); border-left: 4px solid var(--note-border); padding: 8px 12px; border-radius: 4px; }
+  ul.check { list-style: none; padding-left: 4px; }
+</style>
+</head>
+<body>
+<h1>gnome-benq-monitor-control — Design Spec</h1>
+<p class="meta">Status: implemented (v0.1.0) · Date: 2026-10-19 · Author: chrisOTM (with Claude) ·
+Port of <code>linux-desktop/benq-monitor-control</code> v0.1.0 (KDE tray app, PySide6/QML)</p>
+
+<h2>1. Purpose</h2>
+<p>The KDE tray app does not work on GNOME: there is no system tray, and its quick panel relies on
+<code>wlr-layer-shell</code>, which Mutter does not implement (see the parked note
+<code>benq-monitor-control/docs/issues/gnome-support.md</code>). This project brings the same control
+of the BenQ MA320U to GNOME Shell 50 (Ubuntu 26.04) as a native GNOME Shell extension.</p>
+
+<h2>2. Scope</h2>
+<table>
+  <tr><th>Feature (KDE app)</th><th>GNOME extension</th></tr>
+  <tr><td>Quick panel at the tray</td><td>Top-bar indicator with a popup menu: status, picture mode,
+    brightness, volume, Low Blue Light, Brightness Intelligence, input, FloW scenarios, Settings.</td></tr>
+  <tr><td>Per-mode locks, learned rejections, HDR badge</td><td>Same rules, ported unchanged.</td></tr>
+  <tr><td>Settings window (QML)</td><td>Extension preferences (libadwaita): FloW, General, About.</td></tr>
+  <tr><td>FloW scenarios incl. sunrise/sunset, re-apply after start/resume/clock jump</td><td>Same
+    semantics (spec §7 of the KDE app); scenarios stored as JSON in GSettings.</td></tr>
+  <tr><td>KDE Night Light hint</td><td>GNOME Night Light hint (<code>org.gnome.SettingsDaemon.Color</code>,
+    <code>NightLightActive</code>).</td></tr>
+  <tr><td>Location import from KDE</td><td>Dropped; coordinates are entered manually.</td></tr>
+  <tr><td>Language switch EN/DE</td><td>Follows the session language (German for <code>de*</code>, otherwise English).</td></tr>
+  <tr><td>Autostart</td><td>Not needed: the extension runs with the shell.</td></tr>
+  <tr><td>Monitor page (raw values, firmware, bus)</td><td>I²C bus and firmware level in the menu's status line; raw values dropped.</td></tr>
+</table>
+
+<h2>3. Architecture</h2>
+<p>Pure GJS, no Python or helper daemon. ddcutil is started with <code>Gio.Subprocess</code>
+asynchronously, so the shell never blocks on the I²C bus.</p>
+<table>
+  <tr><th>Module</th><th>Responsibility</th><th>Shell imports</th></tr>
+  <tr><td><code>lib/model.js</code></td><td>MA320U description: VCP codes, choices, locks.</td><td>no</td></tr>
+  <tr><td><code>lib/ddcutil.js</code></td><td>Parsers for terse output, error classification, async runner with 10 s timeout and one retry.</td><td>no (Gio)</td></tr>
+  <tr><td><code>lib/session.js</code></td><td>Monitor state, serialized job queue (one ddcutil call at a time), verified writes, learned locks, latest-value-wins coalescing for sliders.</td><td>no</td></tr>
+  <tr><td><code>lib/sun.js</code>, <code>lib/scheduler.js</code>, <code>lib/scenario.js</code></td><td>NOAA sun times, active/next scenario, JSON validation (same format as the KDE app).</td><td>no</td></tr>
+  <tr><td><code>lib/flow.js</code></td><td>Scenario activation, 60 s tick, clock-jump detection, retry after reconnect.</td><td>no (GLib)</td></tr>
+  <tr><td><code>lib/i18n.js</code></td><td>Lookup table translations (EN source strings, DE table).</td><td>no</td></tr>
+  <tr><td><code>ui/indicator.js</code></td><td>Top-bar button and menu.</td><td>yes</td></tr>
+  <tr><td><code>extension.js</code></td><td>Wiring: settings, monitor hotplug, resume, lock screen, notifications.</td><td>yes</td></tr>
+  <tr><td><code>prefs.js</code></td><td>Adw preferences.</td><td>no (Gtk/Adw)</td></tr>
+</table>
+<p>Everything under <code>lib/</code> runs under plain <code>gjs</code>, so it is unit-tested with
+<code>gjs -m tests/run.js</code>.</p>
+
+<h2>4. Behaviour differences to the KDE app</h2>
+<ul>
+  <li><b>Polling:</b> values are read when the menu opens and then every <i>sync interval</i> seconds while it
+    stays open. No background polling while closed (the KDE app polled every 5 s permanently).</li>
+  <li><b>Reconnect:</b> on <code>monitors-changed</code> (hotplug, input switched back), 3 s and 10 s
+    later, and every 60 s while unreachable (the KDE app retried every 10 s; <code>ddcutil detect</code>
+    probes every bus, which is wasteful on battery).</li>
+  <li><b>Lock screen:</b> session modes <code>user</code> and <code>unlock-dialog</code>, so scheduled
+    scenarios still fire while the screen is locked; the indicator is hidden while locked.</li>
+  <li><b>Activate now</b> exists only in the menu, not in the preferences (prefs run in a separate process).</li>
+</ul>
+
+<h2>5. Settings (GSettings <code>org.gnome.shell.extensions.benq-monitor-control</code>)</h2>
+<table>
+  <tr><th>Key</th><th>Type</th><th>Meaning</th></tr>
+  <tr><td><code>scenarios</code></td><td>s</td><td>JSON <code>{"version":1,"scenarios":[…]}</code>, format of the KDE app's <code>scenarios.json</code>.</td></tr>
+  <tr><td><code>location-enabled</code>, <code>latitude</code>, <code>longitude</code></td><td>b, d, d</td><td>Location for sun times.</td></tr>
+  <tr><td><code>sync-interval</code></td><td>i (2–60)</td><td>Seconds between reads while the menu is open.</td></tr>
+</table>
+
+<h2>6. Safety</h2>
+<p>Unchanged from the KDE app: only the six VCP codes 0xDC, 0x10, 0x62, 0x60, 0x19, 0x81 are written, every
+write except input is verified by ddcutil's read-back, input switches need confirmation.</p>
+
+<h2>7. Verification</h2>
+<ul class="check">
+  <li><input type="checkbox" checked disabled> Unit tests for parsers, sun times (against the Python implementation), scheduler, scenario validation, session.</li>
+  <li><input type="checkbox" checked disabled> Live: menu controls on the MA320U after log-out/in (2026-10-19).</li>
+  <li><input type="checkbox" disabled> Live: scheduled scenario fires, re-apply after resume.</li>
+</ul>
+</body>
+</html>

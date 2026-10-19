@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.benq-monitor-control"
+          path="/org/gnome/shell/extensions/benq-monitor-control/">
+    <key name="scenarios" type="s">
+      <default>'{"version":1,"scenarios":[]}'</default>
+      <summary>FloW scenarios</summary>
+      <description>JSON document in the format of the KDE app's scenarios.json (version 1).</description>
+    </key>
+    <key name="location-enabled" type="b">
+      <default>false</default>
+      <summary>Use the location for sunrise and sunset</summary>
+    </key>
+    <key name="latitude" type="d">
+      <range min="-90" max="90"/>
+      <default>0</default>
+      <summary>Latitude in degrees</summary>
+    </key>
+    <key name="longitude" type="d">
+      <range min="-180" max="180"/>
+      <default>0</default>
+      <summary>Longitude in degrees</summary>
+    </key>
+    <key name="sync-interval" type="i">
+      <range min="2" max="60"/>
+      <default>5</default>
+      <summary>Seconds between reads while the menu is open</summary>
+    </key>
+  </schema>
+</schemalist>

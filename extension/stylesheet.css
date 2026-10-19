@@ -1,0 +1,6 @@
+.benq-menu { min-width: 22em; }
+.benq-title { font-weight: bold; }
+.benq-status { font-size: smaller; }
+.benq-hint { font-size: smaller; font-style: italic; }
+.benq-slider-label { min-width: 9em; }
+.benq-slider-value { min-width: 2.5em; text-align: right; }

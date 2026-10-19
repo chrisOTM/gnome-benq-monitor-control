@@ -1,0 +1,10 @@
+{
+  "uuid": "benq-monitor-control@chrisotm.github.io",
+  "name": "BenQ Monitor Control",
+  "description": "DDC/CI control of the BenQ MA320U monitor from the top bar: picture modes, brightness, volume, input, Low Blue Light, Brightness Intelligence and scheduled FloW scenarios (sunrise/sunset). Needs ddcutil.",
+  "version-name": "0.1.0",
+  "shell-version": ["50"],
+  "session-modes": ["user", "unlock-dialog"],
+  "settings-schema": "org.gnome.shell.extensions.benq-monitor-control",
+  "url": "https://github.com/chrisOTM/gnome-benq-monitor-control"
+}
