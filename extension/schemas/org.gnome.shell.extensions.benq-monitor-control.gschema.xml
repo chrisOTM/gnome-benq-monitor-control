@@ -26,5 +26,10 @@
       <default>5</default>
       <summary>Seconds between reads while the menu is open</summary>
     </key>
+    <key name="brightness-keys" type="b">
+      <default>true</default>
+      <summary>Brightness keys control the monitor</summary>
+      <description>Fn brightness keys also change the monitor's brightness; Shift + key changes only the screen under the pointer.</description>
+    </key>
   </schema>
 </schemalist>

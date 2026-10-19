@@ -40,6 +40,11 @@ is locked in sRGB and Display P3, and an HDR signal locks picture mode, brightne
 eye-care settings. If the monitor rejects a write, the control snaps back and stays locked
 in that mode for the rest of the session.
 
+**Brightness keys:** the laptop's Fn brightness keys also change the monitor (steps of 5 %,
+with GNOME's on-screen display). It works while the laptop screen is off, too. Shift + key
+changes only the screen under the pointer. Turn it off in the preferences
+(*Brightness keys control the monitor*); GNOME's own keys then work as before.
+
 **Brightness Intelligence** is BenQ's automatic brightness. The MA320U has a built-in
 ambient light sensor and adjusts its brightness to the room light over the day. While it is
 on, the monitor may override the brightness slider; the slider follows the next time the

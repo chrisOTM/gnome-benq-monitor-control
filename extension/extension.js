@@ -15,6 +15,7 @@ import {MA320U} from './lib/model.js';
 import {NightLight} from './lib/nightLight.js';
 import {loadScenarios} from './lib/scenario.js';
 import {MonitorController, MonitorSession} from './lib/session.js';
+import {BrightnessKeys} from './ui/brightnessKeys.js';
 import {MonitorIndicator} from './ui/indicator.js';
 
 const RETRY_INTERVAL_S = 60;
@@ -47,6 +48,7 @@ export default class BenqMonitorExtension extends Extension {
             'changed::location-enabled', () => this._flow.replan(),
             'changed::latitude', () => this._flow.replan(),
             'changed::longitude', () => this._flow.replan(),
+            'changed::brightness-keys', () => this._syncBrightnessKeys(),
             this);
 
         this._indicator = new MonitorIndicator({
@@ -69,6 +71,9 @@ export default class BenqMonitorExtension extends Extension {
         Main.sessionMode.connectObject('updated', () => this._syncSessionMode(), this);
         this._syncSessionMode();
 
+        this._brightnessKeys = new BrightnessKeys(this._controller);
+        this._syncBrightnessKeys();
+
         this._addTimer(RETRY_INTERVAL_S, () => {
             if (!this._controller.reachable)
                 this._controller.detect();
@@ -85,6 +90,8 @@ export default class BenqMonitorExtension extends Extension {
             GLib.source_remove(id);
         this._timers = null;
         this._hotplugTimers = null;
+        this._brightnessKeys.destroy(); // gives GNOME's keys back
+        this._brightnessKeys = null;
         Main.layoutManager.disconnectObject(this);
         LoginManager.getLoginManager().disconnectObject(this);
         Main.sessionMode.disconnectObject(this);
@@ -108,6 +115,10 @@ export default class BenqMonitorExtension extends Extension {
         for (const error of errors)
             console.warn(`benq-monitor-control: skipped an invalid scenario: ${error}`);
         this._flow.setScenarios(scenarios);
+    }
+
+    _syncBrightnessKeys() {
+        this._brightnessKeys.setActive(this._settings.get_boolean('brightness-keys'));
     }
 
     _location() {

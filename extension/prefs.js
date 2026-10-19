@@ -494,6 +494,12 @@ export default class BenqMonitorPreferences extends ExtensionPreferences {
         interval.subtitle = _('How often the values are read while the menu is open.');
         settings.bind('sync-interval', interval, 'value', Gio.SettingsBindFlags.DEFAULT);
         monitor.add(interval);
+        const keys = new Adw.SwitchRow({
+            title: _('Brightness keys control the monitor'),
+            subtitle: _('Fn brightness keys also change the monitor; Shift + key changes only the screen under the pointer'),
+        });
+        settings.bind('brightness-keys', keys, 'active', Gio.SettingsBindFlags.DEFAULT);
+        monitor.add(keys);
         page.add(monitor);
         return page;
     }

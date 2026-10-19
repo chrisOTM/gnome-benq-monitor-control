@@ -70,6 +70,7 @@ export class MonitorSession {
             hdrActive: this.model.hdrModes.has(this.mode),
             firmware: this._firmware,
             bus: this._handle?.bus ?? null,
+            connector: this._handle?.connector ?? null, // DRM name, e.g. card1-DP-1
             error: this._error,
             hint: this._hint,
         };

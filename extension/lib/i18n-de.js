@@ -12,6 +12,9 @@ export const DE = {
     'Applied from top to bottom; the picture mode always comes first.':
         'Wird von oben nach unten angewendet; der Bildmodus kommt immer zuerst.',
     'At (HH:MM)': 'Um (HH:MM)',
+    'Brightness keys control the monitor': 'Helligkeitstasten steuern den Monitor',
+    'Fn brightness keys also change the monitor; Shift + key changes only the screen under the pointer':
+        'Die Fn-Helligkeitstasten ändern auch den Monitor; Umschalt + Taste ändert nur den Bildschirm unter dem Mauszeiger',
     'Brightness': 'Helligkeit',
     'Brightness Intelligence': 'Brightness Intelligence',
     'Cancel': 'Abbrechen',

@@ -145,7 +145,7 @@ export class DdcutilCli {
         const displays = parseDetectTerse(result.output);
         const found = displays.find(d => d.model === modelName);
         if (found)
-            return {bus: found.bus, model: found.model, serial: found.serial};
+            return {bus: found.bus, model: found.model, serial: found.serial, connector: found.connector};
         if (!displays.length && classifyError(result.output) === ErrorKind.PERMISSION)
             throw new DdcUnavailable('No permission for /dev/i2c-*', PERMISSION_HINT);
         return null;

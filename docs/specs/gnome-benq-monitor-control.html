@@ -87,6 +87,19 @@ asynchronously, so the shell never blocks on the I²C bus.</p>
     probes every bus, which is wasteful on battery).</li>
   <li><b>Lock screen:</b> session modes <code>user</code> and <code>unlock-dialog</code>, so scheduled
     scenarios still fire while the screen is locked; the indicator is hidden while locked.</li>
+  <li><b>Brightness keys:</b> the extension takes over GNOME's four screen brightness keybindings
+    (<code>screen-brightness-up/down</code> and the <code>-monitor</code> variants; the cycle keys stay
+    untouched) with the same schema, flags and <code>Shell.ActionMode.ALL</code>, so they keep working on
+    the lock screen. GNOME's original handler (from <code>Main.brightnessManager</code>) runs first and
+    steps the laptop panel if one is active. Then the monitor's brightness (VCP 0x10) moves by 1/20 of its
+    maximum (5 for 0–100), clamped, based on the latest target (pending or shown value), so a held key
+    coalesces into one pending write. <b>Fn + key</b> steps every screen; <b>Shift + Fn + key</b> steps the
+    monitor only if the logical monitor under the pointer contains its connector (<code>ddcutil detect</code>
+    reports <code>card1-DP-1</code>, Meta calls it <code>DP-1</code>), otherwise it is pure delegation to GNOME.
+    One combined OSD call shows GNOME's scales plus the monitor's new level immediately. If the monitor is
+    unreachable or brightness is locked (HDR), only GNOME acts; if the connector is unknown, the global keys
+    still step the monitor but without an OSD level. Disabling the extension or the setting restores GNOME's
+    handlers; if <code>Main.brightnessManager</code> or its methods are missing, the keybindings are not touched.</li>
   <li><b>Activate now</b> exists only in the menu, not in the preferences (prefs run in a separate process).</li>
 </ul>
 
@@ -95,6 +108,7 @@ asynchronously, so the shell never blocks on the I²C bus.</p>
   <tr><th>Key</th><th>Type</th><th>Meaning</th></tr>
   <tr><td><code>scenarios</code></td><td>s</td><td>JSON <code>{"version":1,"scenarios":[…]}</code>, format of the KDE app's <code>scenarios.json</code>.</td></tr>
   <tr><td><code>location-enabled</code>, <code>latitude</code>, <code>longitude</code></td><td>b, d, d</td><td>Location for sun times.</td></tr>
+  <tr><td><code>brightness-keys</code></td><td>b (default true)</td><td>Brightness keys also control the monitor; toggles live.</td></tr>
   <tr><td><code>sync-interval</code></td><td>i (2–60)</td><td>Seconds between reads while the menu is open.</td></tr>
 </table>
 

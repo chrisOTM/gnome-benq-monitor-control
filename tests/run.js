@@ -4,6 +4,7 @@
 import GLib from 'gi://GLib';
 import System from 'system';
 
+import {Direction, Scope, connectorName, route, stepValue} from '../extension/lib/brightnessKeys.js';
 import {DdcutilCli, Unreachable, WriteRejected, classifyError, ErrorKind, parseDetectTerse, parseGetvcpTerse} from '../extension/lib/ddcutil.js';
 import {runActivation} from '../extension/lib/flow.js';
 import {fmt, setLanguage} from '../extension/lib/i18n.js';
@@ -118,7 +119,7 @@ class FakeBackend {
     }
 
     detect() {
-        return Promise.resolve(this.present ? {bus: 15, model: 'BenQ MA320U', serial: 'x'} : null);
+        return Promise.resolve(this.present ? {bus: 15, model: 'BenQ MA320U', serial: 'x', connector: 'card1-DP-1'} : null);
     }
 
     read(_handle, codes) {
@@ -273,6 +274,68 @@ test('translations fill placeholders', () => {
     assertEqual(fmt('FloW: %1 until %2', 'Abend', '07:12'), 'FloW: Abend bis 07:12');
     setLanguage('en');
     assertEqual(fmt('Scenario %1 activated', 'Evening'), 'Scenario Evening activated');
+});
+
+// --- brightness keys -----------------------------------------------------
+
+test('connector names drop the DRM card prefix', () => {
+    assertEqual(connectorName('card1-DP-1'), 'DP-1');
+    assertEqual(connectorName('card0-HDMI-A-2'), 'HDMI-A-2');
+    assertEqual(connectorName('DP-1'), 'DP-1');
+    assertEqual(connectorName(''), null);
+    assertEqual(connectorName(null), null);
+});
+
+test('detect keeps the connector of the monitor', async () => {
+    const cli = new DdcutilCli({run: () => Promise.resolve({status: 0, output: FIXTURE_DETECT})});
+    assertEqual((await cli.detect('BenQ MA320U')).connector, 'card1-DP-1');
+});
+
+test('session snapshot exposes the connector', async () => {
+    const session = new MonitorSession(new FakeBackend(), MA320U);
+    assertEqual(session.snapshot().connector, null);
+    await session.connect();
+    assertEqual(session.snapshot().connector, 'card1-DP-1');
+});
+
+test('step is 1/20 of the maximum, clamped', () => {
+    assertEqual(stepValue(75, 100, Direction.UP), 80);
+    assertEqual(stepValue(75, 100, Direction.DOWN), 70);
+    assertEqual(stepValue(98, 100, Direction.UP), 100);
+    assertEqual(stepValue(3, 100, Direction.DOWN), 0);
+    assertEqual(stepValue(0, 100, Direction.DOWN), 0);
+    assertEqual(stepValue(100, 100, Direction.UP), 100);
+    assertEqual(stepValue(10, 40, Direction.UP), 12);
+    assertEqual(stepValue(5, 10, Direction.UP), 6, 'at least 1');
+});
+
+test('routing: global keys', () => {
+    const base = {scope: Scope.GLOBAL, usable: true, connector: 'DP-1', pointerConnectors: []};
+    assertEqual(route(base), {delegate: true, stepMonitor: true, osd: true});
+    assertEqual(route({...base, connector: null}), {delegate: true, stepMonitor: true, osd: false});
+    assertEqual(route({...base, usable: false}), {delegate: true, stepMonitor: false, osd: false});
+});
+
+test('routing: current-monitor keys', () => {
+    const base = {scope: Scope.MONITOR, usable: true, connector: 'DP-1'};
+    assertEqual(route({...base, pointerConnectors: ['DP-1']}), {delegate: false, stepMonitor: true, osd: true});
+    assertEqual(route({...base, pointerConnectors: ['eDP-1']}), {delegate: true, stepMonitor: false, osd: false});
+    assertEqual(route({...base, connector: null, pointerConnectors: ['DP-1']}), {delegate: true, stepMonitor: false, osd: false});
+    assertEqual(route({...base, usable: false, pointerConnectors: ['DP-1']}), {delegate: true, stepMonitor: false, osd: false});
+});
+
+test('held key: steps build on the shown target and coalesce into one pending write', async () => {
+    const backend = new FakeBackend();
+    const controller = new MonitorController(new MonitorSession(backend, MA320U));
+    await controller.detect();
+    for (let i = 0; i < 4; i++) {
+        const max = controller.snapshot.maxima.get(Feature.BRIGHTNESS);
+        controller.setValue(Feature.BRIGHTNESS, stepValue(controller.value(Feature.BRIGHTNESS), max, Direction.DOWN));
+    }
+    assertEqual(controller.value(Feature.BRIGHTNESS), 55);
+    await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => resolve() || GLib.SOURCE_REMOVE));
+    assertEqual(backend.values.get(0x10), 55);
+    assert(backend.writes.length <= 2, `expected coalesced writes, got ${backend.writes.length}`);
 });
 
 // --- runner --------------------------------------------------------------
