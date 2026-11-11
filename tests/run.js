@@ -99,7 +99,7 @@ test('cli builds commands and maps failures', async () => {
     assertEqual(calls[1], 'ddcutil --bus 15 --terse getvcp DC 10');
     replies.push({status: 1, output: 'Verification failed'});
     await assertRejects(cli.write(handle, 0x19, 3), WriteRejected);
-    assertEqual(calls[2], 'ddcutil --bus 15 --permit-unknown-feature setvcp 19 0x3');
+    assertEqual(calls[2], 'ddcutil --bus 15 --permit-unknown-feature --verify setvcp 19 0x3');
     replies.push({status: 1, output: ''});
     await assertRejects(cli.write(handle, 0x60, 0x11, false), Unreachable);
     assertEqual(calls[3], 'ddcutil --bus 15 --permit-unknown-feature --noverify setvcp 60 0x11');
@@ -116,6 +116,9 @@ class FakeBackend {
         this.present = true;
         this.reject = new Set(); // `${mode}/${code}` the monitor refuses
         this.writes = [];
+        this.reads = 0;
+        this.rejectNext = 0; // the next N writes are rejected whatever the mode
+        this.noMaximum = new Set(); // codes whose maximum the monitor does not report
     }
 
     detect() {
@@ -125,12 +128,19 @@ class FakeBackend {
     read(_handle, codes) {
         if (!this.present)
             return Promise.reject(new Unreachable('gone'));
+        this.reads++;
         const max = {0x10: 100, 0x62: 50, 0x19: 5};
-        return Promise.resolve(new Map(codes.map(c => [c, {code: c, current: this.values.get(c), maximum: max[c] ?? 255}])));
+        return Promise.resolve(new Map(codes.map(c => [c, {
+            code: c, current: this.values.get(c), maximum: this.noMaximum.has(c) ? undefined : max[c] ?? 255,
+        }])));
     }
 
     write(_handle, code, value) {
         this.writes.push([code, value]);
+        if (this.rejectNext > 0) {
+            this.rejectNext--;
+            return Promise.reject(new WriteRejected('Verification failed'));
+        }
         if (this.reject.has(`${this.values.get(0xDC)}/${code}`))
             return Promise.reject(new WriteRejected('Verification failed'));
         this.values.set(code, value);
@@ -152,9 +162,227 @@ test('session connects, reads and applies with static and learned locks', async 
     assertEqual(await session.apply(Feature.PICTURE_MODE, 0x12), ApplyResult.APPLIED);
     backend.reject.add(`${0x12}/${0x81}`);
     assertEqual(await session.apply(Feature.BRIGHTNESS_INTELLIGENCE, 1), ApplyResult.REJECTED);
-    assert(session.isLocked(Feature.BRIGHTNESS_INTELLIGENCE), 'learned lock');
+    assert(!session.isLocked(Feature.BRIGHTNESS_INTELLIGENCE), 'one rejection does not lock');
+    assertEqual(await session.apply(Feature.BRIGHTNESS_INTELLIGENCE, 1), ApplyResult.REJECTED);
+    assert(session.isLocked(Feature.BRIGHTNESS_INTELLIGENCE), 'learned lock after the second');
     assertEqual(await session.apply(Feature.INPUT_SOURCE, 0x11), ApplyResult.APPLIED);
     assert(!session.reachable, 'input switch drops the handle');
+});
+
+test('session: one rejection does not lock, the second consecutive one does, a success resets', async () => {
+    const backend = new FakeBackend();
+    backend.values.set(0xDC, 0x12);
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    backend.rejectNext = 1;
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 50), ApplyResult.REJECTED);
+    assert(!session.isLocked(Feature.BRIGHTNESS));
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 50), ApplyResult.APPLIED, 'still writable');
+    backend.rejectNext = 1;
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
+    assert(!session.isLocked(Feature.BRIGHTNESS), 'the success reset the count');
+    backend.rejectNext = 1;
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
+    assert(session.isLocked(Feature.BRIGHTNESS), 'second consecutive rejection');
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 60), ApplyResult.LOCKED);
+});
+
+test('session: rejections of picture mode and input are never counted', async () => {
+    const backend = new FakeBackend();
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    backend.rejectNext = 2;
+    await session.apply(Feature.PICTURE_MODE, 0x0A);
+    await session.apply(Feature.PICTURE_MODE, 0x0A);
+    assert(!session.isLocked(Feature.PICTURE_MODE));
+});
+
+test('session: a learned lock expires after the TTL', async () => {
+    const backend = new FakeBackend();
+    let now = 0;
+    const session = new MonitorSession(backend, MA320U, {clock: () => now, learnedLockTtlMs: 1000});
+    await session.connect();
+    backend.rejectNext = 2;
+    await session.apply(Feature.BRIGHTNESS, 50);
+    await session.apply(Feature.BRIGHTNESS, 50);
+    assert(session.isLocked(Feature.BRIGHTNESS));
+    now = 999;
+    assert(session.isLocked(Feature.BRIGHTNESS), 'not yet expired');
+    now = 1001;
+    assert(!session.isLocked(Feature.BRIGHTNESS), 'expired');
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 50), ApplyResult.APPLIED);
+});
+
+test('session: forgetLearnedLocks clears locks and rejection counts', async () => {
+    const backend = new FakeBackend();
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    backend.rejectNext = 2;
+    await session.apply(Feature.BRIGHTNESS, 50);
+    await session.apply(Feature.BRIGHTNESS, 50);
+    assert(session.isLocked(Feature.BRIGHTNESS));
+    const reads = backend.reads;
+    session.forgetLearnedLocks();
+    assert(!session.isLocked(Feature.BRIGHTNESS));
+    assertEqual(backend.reads, reads, 'no bus traffic');
+    backend.rejectNext = 1;
+    await session.apply(Feature.BRIGHTNESS, 50);
+    assert(!session.isLocked(Feature.BRIGHTNESS), 'the count starts again');
+});
+
+test('session: a rejection where the monitor holds the value anyway counts as applied', async () => {
+    const backend = new FakeBackend();
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    backend.write = (_h, code, value) => {
+        backend.values.set(code, value); // arrived, but ddcutil's read-back failed
+        return Promise.reject(new WriteRejected('Verification failed'));
+    };
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 40), ApplyResult.APPLIED);
+    assertEqual(session.snapshot().values.get(Feature.BRIGHTNESS), 40);
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 30), ApplyResult.APPLIED);
+    assert(!session.isLocked(Feature.BRIGHTNESS));
+});
+
+test('session: a rejection after the monitor entered HDR behind our back is LOCKED, nothing learned', async () => {
+    const backend = new FakeBackend();
+    backend.values.set(0xDC, 0x12);
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    backend.values.set(0xDC, 0x23); // changed with the monitor's own buttons
+    backend.reject.add(`${0x23}/${0x10}`);
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 50), ApplyResult.LOCKED);
+    assert(session.snapshot().hdrActive);
+    backend.values.set(0xDC, 0x12);
+    backend.reject.clear();
+    await session.readAll();
+    assert(!session.isLocked(Feature.BRIGHTNESS), 'nothing learned under the old or new mode');
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 50), ApplyResult.APPLIED);
+});
+
+test('session: a rejection re-reads every code and reports an unreachable monitor', async () => {
+    const backend = new FakeBackend();
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    backend.write = () => {
+        backend.present = false;
+        return Promise.reject(new WriteRejected('Verification failed'));
+    };
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 50), ApplyResult.UNREACHABLE);
+});
+
+test('session: range values without a known maximum are invalid (fail closed)', async () => {
+    const backend = new FakeBackend();
+    backend.noMaximum.add(0x62);
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    assertEqual(await session.apply(Feature.VOLUME, 10), ApplyResult.INVALID);
+    assertEqual(backend.writes.length, 0);
+});
+
+test('model: brightness has a pinned maximum of 100', async () => {
+    assertEqual(MA320U.spec(Feature.BRIGHTNESS).maximum, 100);
+    const backend = new FakeBackend();
+    backend.noMaximum.add(0x10);
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    assertEqual(session.snapshot().maxima.get(Feature.BRIGHTNESS), 100);
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 50), ApplyResult.APPLIED);
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 101), ApplyResult.INVALID);
+});
+
+test('session: readPolled re-reads everything when the picture mode changed on the monitor', async () => {
+    const backend = new FakeBackend();
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    backend.values.set(0x19, 3);
+    await session.readPolled();
+    assertEqual(session.snapshot().values.get(Feature.LOW_BLUE_LIGHT), 0, 'mode unchanged: not polled');
+    backend.values.set(0xDC, 0x12);
+    await session.readPolled();
+    assertEqual(session.snapshot().values.get(Feature.LOW_BLUE_LIGHT), 3, 'mode changed: everything current');
+});
+
+test('cli passes --verify or --noverify explicitly', async () => {
+    const calls = [];
+    const cli = new DdcutilCli({run: argv => {
+        calls.push(argv.join(' '));
+        return Promise.resolve({status: 0, output: ''});
+    }});
+    const handle = {bus: 15};
+    await cli.write(handle, 0x10, 50);
+    await cli.write(handle, 0x60, 0x11, false);
+    assert(calls[0].includes(' --verify ') && !calls[0].includes('--noverify'), calls[0]);
+    assert(calls[1].includes(' --noverify ') && !calls[1].includes('--verify'), calls[1]);
+});
+
+test('controller: freshen reads only when the values are stale', async () => {
+    const backend = new FakeBackend();
+    let now = 0;
+    const controller = new MonitorController(new MonitorSession(backend, MA320U), {clock: () => now, freshForMs: 10000});
+    await controller.detect();
+    backend.values.set(0x10, 40); // changed with the monitor's own buttons
+    let reads = backend.reads;
+    now = 5000;
+    await controller.freshen();
+    assertEqual(backend.reads, reads, 'fresh: no read');
+    assertEqual(controller.value(Feature.BRIGHTNESS), 75);
+    now = 10001;
+    await controller.freshen();
+    assertEqual(backend.reads, reads + 1);
+    assertEqual(controller.value(Feature.BRIGHTNESS), 40);
+    reads = backend.reads;
+    await controller.freshen();
+    assertEqual(backend.reads, reads, 'the read made it fresh again');
+});
+
+test('controller: freshen shares one read between concurrent callers', async () => {
+    const backend = new FakeBackend();
+    let now = 0;
+    const controller = new MonitorController(new MonitorSession(backend, MA320U), {clock: () => now});
+    await controller.detect();
+    now = 60000;
+    const reads = backend.reads;
+    await Promise.all([controller.freshen(), controller.freshen(), controller.freshen()]);
+    assertEqual(backend.reads, reads + 1);
+});
+
+test('controller: freshen does not read while a write is pending or when unreachable', async () => {
+    const backend = new FakeBackend();
+    let now = 0;
+    const controller = new MonitorController(new MonitorSession(backend, MA320U), {clock: () => now});
+    await controller.detect();
+    now = 60000;
+    controller.setValue(Feature.BRIGHTNESS, 30);
+    const reads = backend.reads;
+    await controller.freshen();
+    assertEqual(backend.reads, reads);
+    assertEqual(controller.value(Feature.BRIGHTNESS), 30, 'the user value stays');
+    await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20, () => resolve() || GLib.SOURCE_REMOVE));
+    const idle = new MonitorController(new MonitorSession(new FakeBackend(), MA320U));
+    await idle.freshen(); // never connected
+});
+
+test('controller: redetect and refresh forget learned locks, detect does not', async () => {
+    const backend = new FakeBackend();
+    backend.values.set(0xDC, 0x12);
+    const session = new MonitorSession(backend, MA320U);
+    const controller = new MonitorController(session);
+    await controller.detect();
+    const learn = async () => {
+        backend.rejectNext = 2;
+        await controller.apply(Feature.BRIGHTNESS, 50);
+        await controller.apply(Feature.BRIGHTNESS, 50);
+        assert(session.isLocked(Feature.BRIGHTNESS));
+    };
+    await learn();
+    await controller.detect();
+    assert(session.isLocked(Feature.BRIGHTNESS), 'detect keeps it');
+    await controller.redetect();
+    assert(!session.isLocked(Feature.BRIGHTNESS), 'redetect forgets');
+    await learn();
+    await controller.refresh();
+    assert(!session.isLocked(Feature.BRIGHTNESS), 'refresh forgets');
 });
 
 test('session marks the monitor unreachable when it stops answering', async () => {

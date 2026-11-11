@@ -85,6 +85,20 @@ export class BrightnessKeys {
         if (!decision.stepMonitor)
             return;
 
+        this._stepMonitor(scope, direction, decision).catch(e =>
+            console.error(`benq-monitor-control: brightness key failed: ${e}`));
+    }
+
+    // Steps from a fresh base: the monitor's own buttons or Brightness Intelligence may have
+    // changed the value since it was last read. Quick presses share one read and then run in order.
+    async _stepMonitor(scope, direction, decision) {
+        await this._controller.freshen();
+        if (!this._originals)
+            return; // destroyed or given back while waiting
+        const snap = this._controller.snapshot;
+        if (!snap.reachable || snap.locked.get(Feature.BRIGHTNESS))
+            return; // e.g. the fresh read revealed an HDR mode
+        const connector = connectorName(snap.connector);
         const maximum = snap.maxima.get(Feature.BRIGHTNESS) ?? 100;
         const current = this._controller.value(Feature.BRIGHTNESS);
         const target = stepValue(current, maximum, direction);

@@ -174,7 +174,7 @@ class MonitorIndicator extends PanelMenu.Button {
         this._hint.label.clutter_text.line_wrap = true;
         menu.addMenuItem(this._hint);
 
-        this._redetect = new StayOpenItem(_('Detect again'), () => this._controller.detect());
+        this._redetect = new StayOpenItem(_('Detect again'), () => this._controller.redetect());
         menu.addMenuItem(this._redetect);
 
         // Picture mode

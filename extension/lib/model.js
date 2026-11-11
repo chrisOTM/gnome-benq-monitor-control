@@ -91,7 +91,7 @@ export const MA320U = new MonitorModel({
     displayName: 'BenQ MA320U',
     features: [
         spec(Feature.PICTURE_MODE, 0xDC, Kind.CHOICE, {choices: PICTURE_MODES, polled: true}),
-        spec(Feature.BRIGHTNESS, 0x10, Kind.RANGE, {polled: true}),
+        spec(Feature.BRIGHTNESS, 0x10, Kind.RANGE, {maximum: 100, polled: true}),
         spec(Feature.VOLUME, 0x62, Kind.RANGE, {polled: true, editorMaximum: 50}),
         spec(Feature.INPUT_SOURCE, 0x60, Kind.CHOICE, {choices: INPUTS, polled: true}),
         spec(Feature.LOW_BLUE_LIGHT, 0x19, Kind.RANGE, {maximum: 5, editorMaximum: 5}),

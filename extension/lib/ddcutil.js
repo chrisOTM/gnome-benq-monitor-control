@@ -164,8 +164,7 @@ export class DdcutilCli {
 
     async write(handle, code, value, verify = true) {
         const args = ['--bus', String(handle.bus), '--permit-unknown-feature'];
-        if (!verify)
-            args.push('--noverify');
+        args.push(verify ? '--verify' : '--noverify');
         const result = await this._exec(...args, 'setvcp',
             code.toString(16).toUpperCase().padStart(2, '0'), `0x${value.toString(16).toUpperCase()}`);
         if (result.status === 0)
