@@ -292,6 +292,11 @@ export class MonitorController extends Emitter {
         return this._snap.reachable;
     }
 
+    /** Live, unlike snapshot.locked: a learned lock expires without anything publishing. */
+    isLocked(feature) {
+        return this.session.isLocked(feature);
+    }
+
     value(feature) {
         return this._shown.get(feature) ?? this._snap.values.get(feature) ?? 0;
     }

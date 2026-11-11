@@ -77,7 +77,7 @@ export class BrightnessKeys {
         const connector = connectorName(snap.connector);
         const decision = route({
             scope,
-            usable: snap.reachable && !snap.locked.get(Feature.BRIGHTNESS),
+            usable: snap.reachable && !this._controller.isLocked(Feature.BRIGHTNESS),
             connector,
             pointerConnectors: scope === Scope.MONITOR ? this._pointerConnectors() : [],
         });
@@ -98,7 +98,7 @@ export class BrightnessKeys {
         if (!this._originals)
             return; // destroyed or given back while waiting
         const snap = this._controller.snapshot;
-        if (!snap.reachable || snap.locked.get(Feature.BRIGHTNESS))
+        if (!snap.reachable || this._controller.isLocked(Feature.BRIGHTNESS))
             return; // e.g. the fresh read revealed an HDR mode
         // The monitor answers DDC/CI while it shows another computer: leave its brightness alone.
         if (otherInputShown(this._homeInput(), snap.values.get(Feature.INPUT_SOURCE)))

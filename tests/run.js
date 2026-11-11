@@ -1080,6 +1080,21 @@ test('a destroyed controller stops the backend: no command runs afterwards', asy
     assert(!session.reachable);
 });
 
+test('controller: isLocked is live, so a learned lock expires for the keys without any job', async () => {
+    const backend = new FakeBackend();
+    let now = 0;
+    const session = new MonitorSession(backend, MA320U, {clock: () => now, learnedLockTtlMs: 1000});
+    const controller = new MonitorController(session, {clock: () => now});
+    await controller.detect();
+    backend.rejectNext = 2;
+    assertEqual(await controller.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
+    assertEqual(await controller.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
+    assert(controller.isLocked(Feature.BRIGHTNESS), 'locked after two rejections');
+    now += 1001; // nothing reads, writes or publishes in between
+    assert(controller.snapshot.locked.get(Feature.BRIGHTNESS), 'the cached snapshot still says locked');
+    assert(!controller.isLocked(Feature.BRIGHTNESS), 'the live query sees the expiry');
+});
+
 // --- runner --------------------------------------------------------------
 
 const loop = new GLib.MainLoop(null, false);
