@@ -7,6 +7,7 @@ Gio._promisify(Gio.Subprocess.prototype, 'communicate_utf8_async');
 Gio._promisify(Gio.Subprocess.prototype, 'wait_async');
 
 export const TIMEOUT_STATUS = 124;
+export const CANCELLED_STATUS = -2;
 export const PERMISSION_HINT =
     "Grant access to /dev/i2c-*: install ddcutil's udev rule or add your user " +
     'to the i2c group, then log in again.';
@@ -102,11 +103,13 @@ export function classifyError(text) {
 }
 
 /**
- * Run a command, killing it after timeoutMs.
+ * Run a command, killing it after timeoutMs or when `cancellable` is cancelled.
  *
  * @returns {Promise<{status: number, output: string}>} stdout and stderr merged
  */
-export async function runCommand(argv, timeoutMs) {
+export async function runCommand(argv, timeoutMs, cancellable = null) {
+    if (cancellable?.is_cancelled())
+        return {status: CANCELLED_STATUS, output: 'cancelled'};
     let proc;
     try {
         proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE);
@@ -116,20 +119,32 @@ export async function runCommand(argv, timeoutMs) {
         throw e;
     }
     let timedOut = false;
-    const timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeoutMs, () => {
+    let timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeoutMs, () => {
+        timer = 0;
         timedOut = true;
         proc.force_exit();
         return GLib.SOURCE_REMOVE;
     });
+    // Extension disabled: stop the command and remove its timer at once, not up to 10 s later.
+    const cancelId = cancellable?.connect(() => {
+        if (timer)
+            GLib.source_remove(timer);
+        timer = 0;
+        proc.force_exit();
+    }) ?? 0;
     try {
         const [stdout] = await proc.communicate_utf8_async(null, null);
         await proc.wait_async(null);
         if (timedOut)
             return {status: TIMEOUT_STATUS, output: 'timeout'};
+        if (cancellable?.is_cancelled())
+            return {status: CANCELLED_STATUS, output: 'cancelled'};
         return {status: proc.get_if_exited() ? proc.get_exit_status() : -1, output: stdout ?? ''};
     } finally {
-        if (!timedOut)
+        if (timer)
             GLib.source_remove(timer);
+        if (cancelId)
+            cancellable.disconnect(cancelId);
     }
 }
 
@@ -138,6 +153,12 @@ export class DdcutilCli {
         this._run = run;
         this._binary = binary;
         this._timeoutMs = timeoutMs;
+        this._cancellable = new Gio.Cancellable();
+    }
+
+    /** Stop the running command; later calls answer like a monitor that is gone. */
+    destroy() {
+        this._cancellable.cancel();
     }
 
     async detect(modelName) {
@@ -178,10 +199,12 @@ export class DdcutilCli {
     }
 
     async _exec(...args) {
+        if (this._cancellable.is_cancelled())
+            return {status: CANCELLED_STATUS, output: 'cancelled'};
         const argv = [this._binary, ...args];
-        let result = await this._run(argv, this._timeoutMs);
+        let result = await this._run(argv, this._timeoutMs, this._cancellable);
         if (result.status === TIMEOUT_STATUS && result.output === 'timeout')
-            result = await this._run(argv, this._timeoutMs);
+            result = await this._run(argv, this._timeoutMs, this._cancellable);
         return result;
     }
 }

@@ -73,6 +73,12 @@ export class MonitorSession {
         return this._enqueue(() => this._apply(feature, value));
     }
 
+    /** Stop talking to the monitor (extension disabled); queued jobs find it unreachable. */
+    destroy() {
+        this.backend.destroy?.();
+        this._handle = null;
+    }
+
     isLocked(feature) {
         if (this.model.isLocked(feature, this.mode))
             return true;
@@ -365,6 +371,7 @@ export class MonitorController extends Emitter {
     destroy() {
         this._destroyed = true;
         this.disconnectAll();
+        this.session.destroy();
     }
 
     get _writing() {

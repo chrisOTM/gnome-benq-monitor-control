@@ -144,6 +144,7 @@ class MonitorIndicator extends PanelMenu.Button {
         this._hintTimer = 0;
         this._transientHint = '';
         this._syncing = false;
+        this._dialog = null;
 
         this._icon = new St.Icon({icon_name: 'video-display-symbolic', style_class: 'system-status-icon'});
         this.add_child(this._icon);
@@ -260,7 +261,12 @@ class MonitorIndicator extends PanelMenu.Button {
     _confirmInput(choice) {
         if (choice.value === this._controller.value(Feature.INPUT_SOURCE))
             return;
-        new ConfirmInputDialog(choice.label, () => this._set(Feature.INPUT_SOURCE, choice.value)).open();
+        this._dialog?.destroy();
+        this._dialog = new ConfirmInputDialog(choice.label, () => this._set(Feature.INPUT_SOURCE, choice.value));
+        this._dialog.connect('destroy', () => {
+            this._dialog = null;
+        });
+        this._dialog.open();
     }
 
     _onOpenStateChanged(open) {
@@ -403,6 +409,7 @@ class MonitorIndicator extends PanelMenu.Button {
             this._controller.disconnect(id);
         this._flow.disconnect(this._flowId);
         this._nightLight.disconnect(this._nightLightId);
+        this._dialog?.destroy(); // an open confirmation must not outlive the extension
         super.destroy();
     }
 });

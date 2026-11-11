@@ -1,11 +1,12 @@
 // Unit tests for the shell-independent modules: gjs -m tests/run.js
 // Expected sun times come from the KDE app's Python implementation (flow/sun.py).
 
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import System from 'system';
 
 import {Direction, Scope, connectorName, otherInputShown, route, stepValue} from '../extension/lib/brightnessKeys.js';
-import {DdcutilCli, Unreachable, WriteRejected, classifyError, ErrorKind, parseDetectTerse, parseGetvcpTerse} from '../extension/lib/ddcutil.js';
+import {DdcutilCli, Unreachable, WriteRejected, classifyError, ErrorKind, parseDetectTerse, parseGetvcpTerse, runCommand} from '../extension/lib/ddcutil.js';
 import {FlowService, runActivation} from '../extension/lib/flow.js';
 import {fmt, setLanguage} from '../extension/lib/i18n.js';
 import {Feature, MA320U} from '../extension/lib/model.js';
@@ -1049,6 +1050,34 @@ test('model: the home input must fit the connector of this computer', () => {
     assert(MA320U.canBeHomeInput('', 0x11), 'unknown connector: any input of the monitor');
     assert(MA320U.canBeHomeInput(null, 0x13));
     assert(!MA320U.canBeHomeInput('card1-DP-1', 0x0F), 'not an input of this monitor');
+});
+
+test('runCommand kills a command at the timeout and when cancelled', async () => {
+    assertEqual(await runCommand(['sh', '-c', 'echo hi'], 5000), {status: 0, output: 'hi\n'});
+    assertEqual(await runCommand(['sleep', '5'], 100), {status: 124, output: 'timeout'});
+    const cancellable = new Gio.Cancellable();
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => cancellable.cancel() ?? GLib.SOURCE_REMOVE);
+    const started = GLib.get_monotonic_time();
+    assertEqual((await runCommand(['sleep', '5'], 5000, cancellable)).output, 'cancelled');
+    assert(GLib.get_monotonic_time() - started < 2e6, 'cancelled long before sleep ends');
+    assertEqual((await runCommand(['sleep', '5'], 5000, cancellable)).output, 'cancelled', 'nothing is started after cancel');
+});
+
+test('a destroyed controller stops the backend: no command runs afterwards', async () => {
+    const calls = [];
+    const cli = new DdcutilCli({run: argv => {
+        calls.push(argv.join(' '));
+        return Promise.resolve({status: 0, output: argv.includes('detect') ? FIXTURE_DETECT : FIXTURE_GETVCP});
+    }});
+    const session = new MonitorSession(cli, MA320U);
+    const controller = new MonitorController(session);
+    await controller.detect();
+    const before = calls.length;
+    controller.destroy();
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 10), ApplyResult.UNREACHABLE);
+    await session.connect();
+    assertEqual(calls.length, before);
+    assert(!session.reachable);
 });
 
 // --- runner --------------------------------------------------------------

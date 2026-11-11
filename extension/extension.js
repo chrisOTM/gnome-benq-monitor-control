@@ -78,17 +78,21 @@ export default class BenqMonitorExtension extends Extension {
         this._brightnessKeys = new BrightnessKeys(this._controller, () => this._homeInput());
         this._syncBrightnessKeys();
 
+        // `ddcutil detect` probes every I²C bus, so on the laptop alone it is not worth a try.
         this._addTimer(RETRY_INTERVAL_S, () => {
-            if (!this._controller.reachable)
-                this._controller.detect();
+            if (!this._controller.reachable && this._externalDisplayConnected())
+                this._detect();
             return GLib.SOURCE_CONTINUE;
         });
 
         // The session queue runs the detection before the scenario's writes.
-        this._controller.detect();
+        this._detect();
         this._flow.start();
     }
 
+    // unlock-dialog: the extension stays enabled on the lock screen so that scheduled FloW
+    // scenarios still fire and the brightness keys keep reaching the monitor there, as GNOME's
+    // own brightness keys do. Only the indicator is hidden while locked (_syncSessionMode).
     disable() {
         for (const id of this._timers)
             GLib.source_remove(id);
@@ -178,14 +182,29 @@ export default class BenqMonitorExtension extends Extension {
         for (const id of this._hotplugTimers)
             this._removeTimer(id); // no-op for timers that already ran
         this._hotplugTimers = HOTPLUG_DELAYS_S.map(delay => this._addTimer(delay, () => {
-            this._controller.detect();
+            this._detect();
             return GLib.SOURCE_REMOVE;
         }));
     }
 
+    _detect() {
+        return this._controller.detect().catch(e =>
+            console.error(`benq-monitor-control: detection failed: ${e}`));
+    }
+
+    /** Any screen besides the laptop panel; true when Mutter cannot tell. */
+    _externalDisplayConnected() {
+        try {
+            return global.backend.get_monitor_manager().get_logical_monitors()
+                .some(logical => logical.get_monitors().some(m => !m.is_builtin() && !m.is_virtual()));
+        } catch (e) {
+            return true;
+        }
+    }
+
     async _onResume() {
         this._flow.rebaseClock(); // the next tick must not report this resume as a clock jump
-        await this._controller.detect();
+        await this._detect();
         if (!this._flow)
             return; // disabled meanwhile
         this._flow.reapplyCurrent();
