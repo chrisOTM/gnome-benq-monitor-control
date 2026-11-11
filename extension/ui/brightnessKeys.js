@@ -7,7 +7,7 @@ import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {Direction, Scope, connectorName, route, stepValue} from '../lib/brightnessKeys.js';
+import {Direction, Scope, connectorName, otherInputShown, route, stepValue} from '../lib/brightnessKeys.js';
 import {Feature} from '../lib/model.js';
 
 const SCHEMA = 'org.gnome.shell.keybindings';
@@ -21,8 +21,10 @@ const KEYS = {
 };
 
 export class BrightnessKeys {
-    constructor(controller) {
+    /** @param {() => (number|null)} homeInput this computer's input value; null: guard off or not learned */
+    constructor(controller, homeInput = () => null) {
         this._controller = controller;
+        this._homeInput = homeInput;
         this._originals = null; // name -> GNOME's bound handler, while taken over
     }
 
@@ -98,6 +100,9 @@ export class BrightnessKeys {
         const snap = this._controller.snapshot;
         if (!snap.reachable || snap.locked.get(Feature.BRIGHTNESS))
             return; // e.g. the fresh read revealed an HDR mode
+        // The monitor answers DDC/CI while it shows another computer: leave its brightness alone.
+        if (otherInputShown(this._homeInput(), snap.values.get(Feature.INPUT_SOURCE)))
+            return;
         const connector = connectorName(snap.connector);
         const maximum = snap.maxima.get(Feature.BRIGHTNESS) ?? 100;
         const current = this._controller.value(Feature.BRIGHTNESS);

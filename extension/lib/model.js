@@ -27,10 +27,11 @@ const PICTURE_MODES = [
 
 // The MA320U has three inputs (OSD order). Its capabilities string lists 0x0F DisplayPort
 // and 0x15 instead of 0x13, but there is no DisplayPort input; USB-C reads and writes 0x13.
+// `connector`: how that input appears on the computer's side (USB-C carries DisplayPort).
 const INPUTS = [
-    {value: 0x13, label: 'USB-C'},
-    {value: 0x11, label: 'HDMI 1'},
-    {value: 0x12, label: 'HDMI 2'},
+    {value: 0x13, label: 'USB-C', connector: 'DP'},
+    {value: 0x11, label: 'HDMI 1', connector: 'HDMI'},
+    {value: 0x12, label: 'HDMI 2', connector: 'HDMI'},
 ];
 
 /**
@@ -79,6 +80,19 @@ export class MonitorModel {
         if (this.hdrModes.has(mode))
             return this.hdrLocks.has(feature);
         return this.locks.get(mode)?.has(feature) ?? false;
+    }
+
+    /**
+     * Whether `input` can be the input this computer is plugged into, given its DRM connector
+     * (card1-DP-1). The monitor may show another computer when it is first seen, so an input
+     * of the wrong kind is not taken as ours. Unknown connector: any input of the monitor.
+     */
+    canBeHomeInput(drmConnector, input) {
+        const choice = this.spec(Feature.INPUT_SOURCE).choices.find(c => c.value === input);
+        if (!choice)
+            return false;
+        const kind = /(?:^|-)(DP|HDMI)-/.exec(drmConnector ?? '')?.[1];
+        return !kind || !choice.connector || choice.connector === kind;
     }
 
     choiceLabel(feature, value) {

@@ -114,7 +114,7 @@ class ConfirmInputDialog extends ModalDialog.ModalDialog {
         super._init({styleClass: 'benq-confirm-dialog'});
         this.contentLayout.add_child(new Dialog.MessageDialogContent({
             title: fmt('Switch to %1?', inputLabel),
-            description: _('This computer loses control of the monitor until you switch back.'),
+            description: _('The monitor will show another device.'),
         }));
         this.setButtons([
             {label: _('Cancel'), action: () => this.close(), key: Clutter.KEY_Escape},
@@ -371,7 +371,9 @@ class MonitorIndicator extends PanelMenu.Button {
     _syncFlow() {
         const active = this._flow.active;
         const next = this._flow.next;
-        if (active && next)
+        if (this._flow.paused)
+            this._flowHeader.label.text = _('FloW paused — the monitor shows another input');
+        else if (active && next)
             this._flowHeader.label.text = fmt('FloW: %1 until %2', active.name, formatTime(next.start));
         else if (active)
             this._flowHeader.label.text = fmt('FloW: %1', active.name);

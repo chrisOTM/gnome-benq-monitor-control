@@ -85,8 +85,13 @@ export const DE = {
     'Switch to %1?': 'Zu %1 wechseln?',
     'Sync interval (s)': 'Abgleichintervall (s)',
     'The monitor did not accept the change.': 'Der Monitor hat die Änderung nicht übernommen.',
-    'This computer loses control of the monitor until you switch back.':
-        'Dieser Computer verliert die Kontrolle über den Monitor, bis zurückgeschaltet wird.',
+    "This computer's input": 'Eingang dieses Rechners',
+    'The monitor will show another device.': 'Der Monitor zeigt dann ein anderes Gerät.',
+    'The brightness keys follow the same rule.': 'Für die Helligkeitstasten gilt dasselbe.',
+    'Not learned yet': 'Noch nicht erkannt',
+    'Run scheduled scenarios only while the monitor shows this computer':
+        'Geplante Szenarien nur ausführen, solange der Monitor diesen Rechner zeigt',
+    'FloW paused — the monitor shows another input': 'FloW pausiert — der Monitor zeigt einen anderen Eingang',
     'Time': 'Uhrzeit',
     'Today: sunrise %1, sunset %2': 'Heute: Sonnenaufgang %1, Sonnenuntergang %2',
     'Use location': 'Standort verwenden',

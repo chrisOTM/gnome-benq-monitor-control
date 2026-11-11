@@ -35,6 +35,8 @@ export default class BenqMonitorExtension extends Extension {
             controller: this._controller,
             location: () => this._location(),
             launch: desktopId => this._launch(desktopId),
+            homeInput: () => this._homeInput(),
+            learnHomeInput: value => this._learnHomeInput(value),
         });
         this._flow.connect('activated', (_flow, name, skipped) => {
             this._notify(skipped
@@ -49,6 +51,8 @@ export default class BenqMonitorExtension extends Extension {
             'changed::latitude', () => this._flow.replan(),
             'changed::longitude', () => this._flow.replan(),
             'changed::brightness-keys', () => this._syncBrightnessKeys(),
+            'changed::input-guard', () => this._flow.recheck(),
+            'changed::home-input', () => this._flow.recheck(),
             this);
 
         this._indicator = new MonitorIndicator({
@@ -71,7 +75,7 @@ export default class BenqMonitorExtension extends Extension {
         Main.sessionMode.connectObject('updated', () => this._syncSessionMode(), this);
         this._syncSessionMode();
 
-        this._brightnessKeys = new BrightnessKeys(this._controller);
+        this._brightnessKeys = new BrightnessKeys(this._controller, () => this._homeInput());
         this._syncBrightnessKeys();
 
         this._addTimer(RETRY_INTERVAL_S, () => {
@@ -121,6 +125,23 @@ export default class BenqMonitorExtension extends Extension {
         this._brightnessKeys.setActive(this._settings.get_boolean('brightness-keys'));
     }
 
+    /** This computer's input value, or null while the guard is off or nothing is learned. */
+    _homeInput() {
+        if (!this._settings.get_boolean('input-guard'))
+            return null;
+        const value = this._settings.get_int('home-input');
+        return value < 0 ? null : value;
+    }
+
+    // Only the first value is stored, and only an input that fits this computer's connector:
+    // the monitor may show another computer when it is first seen. The prefs row changes it later.
+    _learnHomeInput(value) {
+        if (this._settings.get_int('home-input') >= 0)
+            return;
+        if (MA320U.canBeHomeInput(this._controller.snapshot.connector, value))
+            this._settings.set_int('home-input', value);
+    }
+
     _location() {
         if (!this._settings.get_boolean('location-enabled'))
             return null;
@@ -163,6 +184,7 @@ export default class BenqMonitorExtension extends Extension {
     }
 
     async _onResume() {
+        this._flow.rebaseClock(); // the next tick must not report this resume as a clock jump
         await this._controller.detect();
         if (!this._flow)
             return; // disabled meanwhile

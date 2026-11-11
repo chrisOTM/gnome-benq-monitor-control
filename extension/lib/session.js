@@ -162,8 +162,8 @@ export class MonitorSession {
             await this._read(this.model.codes()); // values are stored per mode on the monitor
         else
             this._values.set(feature, value); // ddcutil verified the write by reading it back
-        if (isInput)
-            this._handle = null; // the monitor now shows another source
+        // The monitor now shows another source but keeps answering DDC/CI (measured 2026-11-11),
+        // so the handle stays and the value just stored is what it shows.
         return ApplyResult.APPLIED;
     }
 
@@ -179,8 +179,6 @@ export class MonitorSession {
         const key = `${this.mode}/${feature}`;
         if (this._values.get(feature) === value) {
             this._rejections.delete(key);
-            if (feature === Feature.INPUT_SOURCE)
-                this._handle = null;
             return ApplyResult.APPLIED;
         }
         if (this.model.isLocked(feature, this.mode))
@@ -304,11 +302,13 @@ export class MonitorController extends Emitter {
     }
 
     /**
-     * Make the polled values current before a relative change (brightness keys). Resolves at
-     * once while they are fresh, a write is pending or the monitor is unreachable.
+     * Make the polled values current before a relative change (brightness keys) or a decision
+     * on the shown input. Resolves at once while they are fresh, a write is pending or the
+     * monitor is unreachable. `force` always goes through the session queue, so it also waits
+     * for a detection that is still running and the snapshot afterwards is the monitor's answer.
      */
-    freshen() {
-        if (!this.reachable || this._writing || this._clock() - this._freshAt < this._freshForMs)
+    freshen({force = false} = {}) {
+        if (!force && (!this.reachable || this._writing || this._clock() - this._freshAt < this._freshForMs))
             return Promise.resolve();
         // Not _exclusive: that drops the call while a poll is in flight, and the caller must wait.
         this._freshening ??= this._job(() => this.session.readPolled())
