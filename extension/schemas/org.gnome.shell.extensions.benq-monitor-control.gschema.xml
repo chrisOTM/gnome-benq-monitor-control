@@ -31,5 +31,16 @@
       <summary>Brightness keys control the monitor</summary>
       <description>Fn brightness keys also change the monitor's brightness; Shift + key changes only the screen under the pointer.</description>
     </key>
+    <key name="input-guard" type="b">
+      <default>true</default>
+      <summary>Only act while the monitor shows this computer</summary>
+      <description>Run scheduled scenarios and the brightness keys only while the monitor shows this computer.</description>
+    </key>
+    <key name="home-input" type="i">
+      <range min="-1" max="255"/>
+      <default>-1</default>
+      <summary>VCP 0x60 value of this computer's input</summary>
+      <description>-1 means not learned yet; it is learned from the first input the monitor reports.</description>
+    </key>
   </schema>
 </schemalist>

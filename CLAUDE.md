@@ -1,7 +1,7 @@
 # gnome-benq-monitor-control
 
 GNOME Shell 50 extension: DDC/CI control of the BenQ MA320U via the `ddcutil` CLI. GJS port of
-`../benq-monitor-control` (KDE tray app, PySide6) — same VCP map, locks, scenario JSON format.
+`~/coding-projects/_archive/benq-monitor-control` (KDE tray app, PySide6) — same VCP map, locks, scenario JSON format.
 Design: `docs/specs/gnome-benq-monitor-control.html`.
 
 - `extension/lib/`: no shell imports (GLib/Gio only), unit-tested with `gjs -m tests/run.js`.
@@ -9,6 +9,11 @@ Design: `docs/specs/gnome-benq-monitor-control.html`.
   latest-value-wins slider coalescing and shown-until-confirmed values. `flow.js` = scenario
   activation/scheduling; `scheduler.js`/`sun.js` ported 1:1 from the Python app (sun times checked
   against it in the tests).
+- Input guard: the monitor answers DDC/CI while it shows another computer, so `FlowService` holds automatic
+  activations (and `ui/brightnessKeys.js` the keys) until a fresh read shows `home-input` (VCP 0x60, learned
+  at first contact, setting `input-guard`). Menu picks and controls are never guarded.
+- `MonitorController.freshen()` re-reads before relative steps (keys). Learned locks need two rejections in a
+  row and expire after 10 min (also on menu open / Detect again).
 - `extension/ui/indicator.js`: PanelMenu.Button menu; `extension.js`: wiring (hotplug via
   `monitors-changed`, resume via LoginManager `prepare-for-sleep`, lock screen via session modes
   `user` + `unlock-dialog`, indicator hidden while locked). `prefs.js`: Adw, scenario editor saves

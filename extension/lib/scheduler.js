@@ -8,6 +8,7 @@ import {sunTimes} from './sun.js';
 export function startOn(scenario, day, location) {
     const {kind, offset_min: offset = 0} = scenario.schedule;
     let base;
+    let shift = 0; // the offset moves sunrise and sunset only
     if (kind === ScheduleKind.TIME) {
         const [h, m] = parseTime(scenario.schedule.at);
         base = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m);
@@ -16,12 +17,13 @@ export function startOn(scenario, day, location) {
             return null;
         const sun = sunTimes(day.getFullYear(), day.getMonth(), day.getDate(), location.latitude, location.longitude);
         base = kind === ScheduleKind.SUNRISE ? sun.sunrise : sun.sunset;
+        shift = offset;
         if (!base)
             return null;
     } else {
         return null;
     }
-    return new Date(base.getTime() + offset * 60000);
+    return new Date(base.getTime() + shift * 60000);
 }
 
 function addDays(date, days) {

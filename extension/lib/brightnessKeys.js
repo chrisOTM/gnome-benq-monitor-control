@@ -43,3 +43,12 @@ export function route({scope, usable, connector, pointerConnectors = []}) {
         ? {delegate: false, stepMonitor: true, osd: true}
         : {delegate: true, stepMonitor: false, osd: false};
 }
+
+/**
+ * True when the monitor shows another computer: the home input is known (guard on) and the
+ * input read from the monitor differs. Unknown values never count.
+ */
+export function otherInputShown(homeInput, shownInput) {
+    return homeInput !== null && homeInput !== undefined && shownInput !== null && shownInput !== undefined &&
+        shownInput !== homeInput;
+}

@@ -45,8 +45,8 @@ export function actionFromJson(data) {
     require(data !== null && typeof data === 'object' && !Array.isArray(data), 'each action must be an object');
     require(Object.values(ActionType).includes(data.type), `unknown action type: ${JSON.stringify(data.type)}`);
     if (data.type === ActionType.OPEN_APP) {
-        require(typeof data.desktop_id === 'string' && data.desktop_id.endsWith('.desktop'),
-            'open_app needs a desktop_id ending in .desktop');
+        require(typeof data.desktop_id === 'string' && data.desktop_id.endsWith('.desktop') &&
+            !data.desktop_id.includes('/'), 'open_app needs a plain desktop_id ending in .desktop');
         return {type: data.type, desktop_id: data.desktop_id};
     }
     require(Number.isInteger(data.value), `${data.type} needs an integer value`);
@@ -95,32 +95,36 @@ export function scenarioFromJson(data) {
 }
 
 /**
- * Parse the stored document. Invalid scenarios are dropped and reported, so one broken
- * entry does not hide the others.
+ * Parse the stored document. Invalid scenarios are reported and returned raw in `invalid`
+ * (pass them to dumpScenarios so a save does not lose them); one broken entry does not hide
+ * the others.
  *
- * @returns {{scenarios: object[], errors: string[]}}
+ * @returns {{scenarios: object[], errors: string[], invalid: object[]}}
  */
 export function loadScenarios(text) {
     let data;
     try {
         data = JSON.parse(text);
     } catch (e) {
-        return {scenarios: [], errors: [`not valid JSON: ${e.message}`]};
+        return {scenarios: [], errors: [`not valid JSON: ${e.message}`], invalid: []};
     }
     if (data === null || typeof data !== 'object' || data.version !== FORMAT_VERSION || !Array.isArray(data.scenarios))
-        return {scenarios: [], errors: ['unsupported file format']};
+        return {scenarios: [], errors: ['unsupported file format'], invalid: []};
     const scenarios = [];
     const errors = [];
+    const invalid = [];
     for (const item of data.scenarios) {
         try {
             scenarios.push(scenarioFromJson(item));
         } catch (e) {
             errors.push(e.message);
+            invalid.push(item);
         }
     }
-    return {scenarios, errors};
+    return {scenarios, errors, invalid};
 }
 
-export function dumpScenarios(scenarios) {
-    return JSON.stringify({version: FORMAT_VERSION, scenarios});
+/** Valid scenarios first, then the raw invalid items, so a broken entry is not lost on save. */
+export function dumpScenarios(scenarios, invalid = []) {
+    return JSON.stringify({version: FORMAT_VERSION, scenarios: [...scenarios, ...invalid]});
 }

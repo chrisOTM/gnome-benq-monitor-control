@@ -14,7 +14,7 @@ software. Display Pilot 2 has a Linux build, but it does not support the MA seri
 It is the GNOME port of [benq-monitor-control](https://github.com/chrisOTM/benq-monitor-control),
 a tray app for KDE Plasma. Both use the same VCP map, safety rules and scenario format.
 
-**Status:** v0.1.0. Tested on one MA320U (USB-C) with GNOME Shell 50 on Wayland
+**Status:** v0.2.0. Tested on one MA320U (USB-C) with GNOME Shell 50 on Wayland
 (Ubuntu 26.04).
 
 <p>
@@ -32,14 +32,17 @@ a tray app for KDE Plasma. Both use the same VCP map, safety rules and scenario 
 | Picture mode | Tux-Book (BenQ: M-Book), sRGB, Display P3, Cinema, Game, User. Shows *HDR signal active* when the monitor receives HDR. |
 | Picture & sound | Brightness (0–100) and volume (0–50) sliders. |
 | Eye care | Low Blue Light (Off, 1–5) and Brightness Intelligence. |
-| Input | USB-C, HDMI 1, HDMI 2. Switching away asks for confirmation, because this computer loses control of the monitor until you switch back. |
+| Input | USB-C, HDMI 1, HDMI 2. Switching asks for confirmation, because the monitor will show another device. The extension keeps its connection, the menu shows the new input and can switch back. |
 | FloW | The scenarios; the active one is ticked and the header shows until when it applies. |
 
 The menu stays open while you change things, so you see each change take effect. Controls
 the monitor refuses in the current picture mode are greyed out. Low Blue Light, for example,
 is locked in sRGB and Display P3, and an HDR signal locks picture mode, brightness and the
-eye-care settings. If the monitor rejects a write, the control snaps back and stays locked
-in that mode for the rest of the session.
+eye-care settings. After a rejected write the extension re-reads all values; if the value
+arrived anyway, it counts as applied. A control is locked only after the second rejection in
+a row, and the control then snaps back. Such a learned lock is forgotten after 10 minutes,
+when the menu is opened, or with *Detect again*. The static locks (Low Blue Light in sRGB and
+Display P3, HDR) stay.
 
 **Brightness Intelligence** is BenQ's automatic brightness. The MA320U has a built-in
 ambient light sensor and adjusts its brightness to the room light over the day. While it is
@@ -61,8 +64,12 @@ panel. The extension adds the monitor (steps of 5 %, with GNOME's on-screen disp
 | Laptop panel and monitor are on | Both | Only the screen under the pointer |
 | Monitor not reachable, or brightness locked by HDR | Laptop panel only, as in plain GNOME | Laptop panel only |
 
-Holding a key sends only the latest value to the monitor. The keys also work on the lock
-screen. Turn this off in the preferences (*Brightness keys control the monitor*); disabling
+Holding a key sends only the latest value to the monitor. If the extension's last read or
+write is older than 10 seconds, it reads the monitor's current values before a step, so a
+press steps from the real brightness even if the monitor's own buttons or Brightness
+Intelligence changed it. While the monitor shows another computer (see *Input guard* below),
+the keys do nothing to the monitor; GNOME's own handler still runs. The keys also work on the
+lock screen. Turn this off in the preferences (*Brightness keys control the monitor*); disabling
 it or the extension gives the keys back to GNOME unchanged.
 
 ### FloW scenarios
@@ -77,12 +84,26 @@ Create scenarios in the preferences (*Settings…* in the menu, or the *Extensio
   under *General*. Nothing is looked up online.
 - **Semantics:** a scheduled scenario stays active until the next scheduled start, so *Day at
   sunrise* plus *Evening at sunset* covers the whole day. Picking a scenario in the menu
-  applies it until the next scheduled start.
-- **Re-apply:** after login, after resume from suspend and after a clock jump, the scenario
-  that should be active now is applied again, without opening applications and without a
-  notification. Schedules also fire while the screen is locked.
+  applies it until the next scheduled start, also across resume and clock jumps. The offset
+  applies to sunrise and sunset only. Activations run one after another.
+- **Re-apply:** after login, once per resume from suspend and after a clock jump, the
+  scenario that should be active now is applied again, without opening applications and
+  without a notification. Schedules also fire while the screen is locked.
+- **Retries:** while the monitor does not answer, an activation is tried at most three times
+  per trigger. A new trigger (scheduled start, resume, manual pick) starts over.
 - **Notification** (optional) when a scenario is activated, including how many actions the
-  monitor refused (e.g. Low Blue Light in sRGB).
+  monitor refused (e.g. Low Blue Light in sRGB). Nothing is shown when no action reached the
+  monitor; the later retry is silent.
+- **Input guard:** the MA320U keeps answering DDC/CI while it shows another computer.
+  Scheduled scenarios (scheduled start, re-apply after login, resume or clock jump, retries)
+  and the brightness keys therefore act only while the monitor shows this computer's input.
+  The check is a fresh read. A held scenario shows *FloW paused — the monitor shows another
+  input* in the menu header, is re-checked every minute and applied silently when the input
+  returns. Picking a scenario in the menu and all menu controls always work. This computer's
+  input is learned at first contact, but only if it fits the connector the monitor is found
+  on (USB-C arrives as DisplayPort, so on a DisplayPort connector only USB-C is learned). Under
+  *General* you can change or reset it, or switch the guard off (*Run scheduled scenarios only
+  while the monitor shows this computer*, *This computer's input*).
 
 <img src="assets/screenshots/prefs-general.png" alt="General preferences: location for sun times and sync interval" width="400">
 
@@ -122,10 +143,13 @@ The monitor icon appears in the top bar. It is dimmed while the monitor is not r
   latest value.
 - **Finding the monitor:** by model name (`ddcutil detect`), never by bus number. It is
   detected again 3 s and 10 s after a display change (hotplug, input switched back) and
-  every 60 s while it is not reachable.
+  every 60 s while it is not reachable, but only while a screen other than the laptop's
+  built-in panel is connected.
 - **Reading:** when the menu opens, and then every *sync interval* seconds (default 5) while
-  it stays open. Nothing is polled while the menu is closed, so the extension costs nothing
-  in the background on battery.
+  it stays open. Nothing is polled while the menu is closed. On the laptop alone nothing talks to
+  the bus after the one detection at login. With the monitor attached, the only background traffic is one short read per
+  minute while a scenario is held back by the input guard, and one read before a brightness
+  key step.
 - **Brightness keys:** the extension replaces GNOME Shell's four screen brightness
   keybindings (`screen-brightness-up/down` and their Shift variants `-monitor`) with its
   own. Each press first runs GNOME's original handler, which steps the laptop panel, then
@@ -149,7 +173,10 @@ The extension writes only six VCP codes:
 | Low Blue Light | 0x19 | 0 off, 1–5 |
 | Brightness Intelligence | 0x81 | 0 off, 1 on (a read value of 2 also means on) |
 
-Every write except the input switch is verified by ddcutil reading the value back.
+Every write except the input switch is verified by ddcutil reading the value back
+(`--verify` is passed explicitly). A range value is never written without a known maximum:
+brightness is pinned to 100, Low Blue Light to 5, and volume uses the maximum the monitor
+reports.
 Manufacturer-specific codes whose meaning is unknown are never written, and settings end up
 in the monitor exactly as if BenQ's own software had changed them. The VCP map comes from
 the KDE project's analysis of the publicly downloadable Display Pilot 2 packages and from
@@ -160,7 +187,7 @@ licence.
 
 | Symptom | What to check |
 |---|---|
-| *Monitor not reachable* | `ddcutil detect` must list *BenQ MA320U*. The monitor must show this computer's input and must not be in standby. |
+| *Monitor not reachable* | `ddcutil detect` must list *BenQ MA320U*. The monitor must not be in standby. |
 | *No permission for /dev/i2c-\** | Install ddcutil's udev rule (the Ubuntu package does) or add your user to the `i2c` group, then log in again. |
 | A control is greyed out | The monitor does not accept it in the current picture mode (or with an HDR signal). |
 | Scenario at sunrise/sunset never fires | Set and enable a location under *General*. In polar day or night there is no sunrise or sunset that day. |

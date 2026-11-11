@@ -18,14 +18,24 @@ export const ApplyResult = Object.freeze({
     INVALID: 'invalid',
 });
 
+function monotonicMs() {
+    return GLib.get_monotonic_time() / 1000;
+}
+
+// A rejection is only trusted as a lock when it repeats; locks are forgotten after a while.
+const REJECTIONS_TO_LEARN = 2;
+
 export class MonitorSession {
-    constructor(backend, model) {
+    constructor(backend, model, {clock = monotonicMs, learnedLockTtlMs = 10 * 60 * 1000} = {}) {
+        this._clock = clock;
+        this._learnedTtl = learnedLockTtlMs;
         this.backend = backend;
         this.model = model;
         this._handle = null;
         this._values = new Map();
         this._maxima = new Map();
-        this._learned = new Set(); // `${mode}/${feature}`
+        this._learned = new Map(); // `${mode}/${feature}` -> time learned
+        this._rejections = new Map(); // `${mode}/${feature}` -> consecutive rejections
         this._firmware = null;
         this._error = null;
         this._hint = null;
@@ -49,7 +59,13 @@ export class MonitorSession {
     }
 
     readPolled() {
-        return this._enqueue(() => this._read(this.model.codes(true)));
+        return this._enqueue(async () => {
+            const before = this.mode;
+            await this._read(this.model.codes(true));
+            // The values that are not polled are stored per mode, so they are stale now.
+            if (this._handle !== null && before !== null && this.mode !== before)
+                await this._read(this.model.codes());
+        });
     }
 
     /** @returns {Promise<string>} an ApplyResult */
@@ -57,8 +73,30 @@ export class MonitorSession {
         return this._enqueue(() => this._apply(feature, value));
     }
 
+    /** Stop talking to the monitor (extension disabled); queued jobs find it unreachable. */
+    destroy() {
+        this.backend.destroy?.();
+        this._handle = null;
+    }
+
     isLocked(feature) {
-        return this.model.isLocked(feature, this.mode) || this._learned.has(`${this.mode}/${feature}`);
+        if (this.model.isLocked(feature, this.mode))
+            return true;
+        const key = `${this.mode}/${feature}`;
+        const learnedAt = this._learned.get(key);
+        if (learnedAt === undefined)
+            return false;
+        if (this._clock() - learnedAt > this._learnedTtl) {
+            this._learned.delete(key);
+            return false;
+        }
+        return true;
+    }
+
+    /** Give every control a fresh chance (menu opened, detect again). No bus traffic. */
+    forgetLearnedLocks() {
+        this._learned.clear();
+        this._rejections.clear();
     }
 
     snapshot() {
@@ -113,13 +151,8 @@ export class MonitorSession {
         try {
             await this.backend.write(this._handle, spec.code, value, !isInput);
         } catch (e) {
-            if (e instanceof WriteRejected) {
-                console.log(`benq-monitor-control: monitor rejected ${feature}=${value} in mode ${this.mode}`);
-                if (!NOT_LEARNED.has(feature))
-                    this._learned.add(`${this.mode}/${feature}`);
-                await this._read([spec.code]);
-                return ApplyResult.REJECTED;
-            }
+            if (e instanceof WriteRejected)
+                return this._rejected(spec, feature, value, e);
             if (e instanceof Unreachable) {
                 this._handle = null;
                 return ApplyResult.UNREACHABLE;
@@ -130,13 +163,39 @@ export class MonitorSession {
             }
             throw e;
         }
+        this._rejections.delete(`${this.mode}/${feature}`);
         if (feature === Feature.PICTURE_MODE)
             await this._read(this.model.codes()); // values are stored per mode on the monitor
         else
             this._values.set(feature, value); // ddcutil verified the write by reading it back
-        if (isInput)
-            this._handle = null; // the monitor now shows another source
+        // The monitor now shows another source but keeps answering DDC/CI (measured 2026-11-11),
+        // so the handle stays and the value just stored is what it shows.
         return ApplyResult.APPLIED;
+    }
+
+    // The monitor refused a write. Re-read everything first: the picture mode may have changed
+    // on the monitor itself, and the write may have arrived although the read-back failed.
+    async _rejected(spec, feature, value, error) {
+        const modeBefore = this.mode;
+        const detail = String(error.message ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+        console.log(`benq-monitor-control: monitor rejected ${feature}=${value} in mode ${modeBefore}: ${detail}`);
+        await this._read(this.model.codes());
+        if (this._handle === null)
+            return ApplyResult.UNREACHABLE;
+        const key = `${this.mode}/${feature}`;
+        if (this._values.get(feature) === value) {
+            this._rejections.delete(key);
+            return ApplyResult.APPLIED;
+        }
+        if (this.model.isLocked(feature, this.mode))
+            return ApplyResult.LOCKED;
+        if (!NOT_LEARNED.has(feature)) {
+            const count = (this._rejections.get(key) ?? 0) + 1;
+            this._rejections.set(key, count);
+            if (count >= REJECTIONS_TO_LEARN)
+                this._learned.set(key, this._clock());
+        }
+        return ApplyResult.REJECTED;
     }
 
     async _read(codes) {
@@ -184,7 +243,9 @@ export class MonitorSession {
             return spec.choices.some(c => c.value === value);
         if (spec.kind === Kind.TOGGLE)
             return value === 0 || value === 1;
-        const maximum = this._maxima.get(spec.feature) ?? spec.maximum ?? 100;
+        const maximum = this._maxima.get(spec.feature) ?? spec.maximum;
+        if (maximum === null || maximum === undefined)
+            return false; // never write a value that cannot be bounded
         return spec.minimum <= value && value <= maximum;
     }
 
@@ -196,10 +257,6 @@ export class MonitorSession {
     }
 }
 
-function monotonicMs() {
-    return GLib.get_monotonic_time() / 1000;
-}
-
 /**
  * UI-facing state on top of the session: shows the user's value until the monitor
  * confirms or rejects it, sends only the latest slider value per feature, and keeps
@@ -208,12 +265,15 @@ function monotonicMs() {
  * Events: 'changed' (), 'write-failed' (feature, reason)
  */
 export class MonitorController extends Emitter {
-    constructor(session, {quietAfterWriteMs = 2000, clock = monotonicMs} = {}) {
+    constructor(session, {quietAfterWriteMs = 2000, freshForMs = 10000, clock = monotonicMs} = {}) {
         super();
         this.session = session;
         this.model = session.model;
         this._quietAfter = quietAfterWriteMs;
         this._clock = clock;
+        this._freshForMs = freshForMs;
+        this._freshAt = -Infinity; // last successful read or write
+        this._freshening = null;
         this._snap = session.snapshot();
         this._shown = new Map();
         this._pending = new Map();
@@ -232,6 +292,11 @@ export class MonitorController extends Emitter {
         return this._snap.reachable;
     }
 
+    /** Live, unlike snapshot.locked: a learned lock expires without anything publishing. */
+    isLocked(feature) {
+        return this.session.isLocked(feature);
+    }
+
     value(feature) {
         return this._shown.get(feature) ?? this._snap.values.get(feature) ?? 0;
     }
@@ -241,8 +306,33 @@ export class MonitorController extends Emitter {
         return this._job(() => this.session.connect());
     }
 
+    /** Like detect, but gives locked controls a fresh chance first. */
+    redetect() {
+        this.session.forgetLearnedLocks();
+        return this.detect();
+    }
+
+    /**
+     * Make the polled values current before a relative change (brightness keys) or a decision
+     * on the shown input. Resolves at once while they are fresh, a write is pending or the
+     * monitor is unreachable. `force` always goes through the session queue, so it also waits
+     * for a detection that is still running and the snapshot afterwards is the monitor's answer.
+     */
+    freshen({force = false} = {}) {
+        if (!force && (!this.reachable || this._writing || this._clock() - this._freshAt < this._freshForMs))
+            return Promise.resolve();
+        // Not _exclusive: that drops the call while a poll is in flight, and the caller must wait.
+        this._freshening ??= this._job(() => this.session.readPolled())
+            .catch(() => {}) // already logged by the session queue
+            .finally(() => {
+                this._freshening = null;
+            });
+        return this._freshening;
+    }
+
     /** Re-read everything (menu opened), or reconnect when unreachable. */
     refresh() {
+        this.session.forgetLearnedLocks();
         return this._exclusive(() => this.reachable ? this.session.readAll() : this.session.connect());
     }
 
@@ -277,6 +367,8 @@ export class MonitorController extends Emitter {
     /** Apply a value as part of a scenario: no coalescing, result returned to the caller. */
     async apply(feature, value) {
         const result = await this.session.apply(feature, value);
+        if (result === ApplyResult.APPLIED)
+            this._freshAt = this._clock();
         this._publish();
         return result;
     }
@@ -284,6 +376,7 @@ export class MonitorController extends Emitter {
     destroy() {
         this._destroyed = true;
         this.disconnectAll();
+        this.session.destroy();
     }
 
     get _writing() {
@@ -306,6 +399,8 @@ export class MonitorController extends Emitter {
             this._pending.delete(feature);
         }
         this._inflight.delete(feature);
+        if (result === ApplyResult.APPLIED)
+            this._freshAt = this._clock();
         this._quietUntil = this._clock() + this._quietAfter;
         this._publish();
         this._release(feature);
@@ -328,7 +423,10 @@ export class MonitorController extends Emitter {
 
     async _job(job) {
         try {
-            return await job();
+            const result = await job();
+            if (this.session.reachable)
+                this._freshAt = this._clock();
+            return result;
         } finally {
             this._publish();
         }

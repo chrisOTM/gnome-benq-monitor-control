@@ -79,7 +79,9 @@ function scheduleSummary(schedule) {
 class ScenarioModel {
     constructor(settings) {
         this._settings = settings;
-        this.scenarios = loadScenarios(settings.get_string('scenarios')).scenarios;
+        const loaded = loadScenarios(settings.get_string('scenarios'));
+        this.scenarios = loaded.scenarios;
+        this.invalid = loaded.invalid; // kept raw, written back on every save
     }
 
     find(id) {
@@ -87,7 +89,7 @@ class ScenarioModel {
     }
 
     save() {
-        this._settings.set_string('scenarios', dumpScenarios(this.scenarios));
+        this._settings.set_string('scenarios', dumpScenarios(this.scenarios, this.invalid));
     }
 
     add(name) {
@@ -500,6 +502,36 @@ export default class BenqMonitorPreferences extends ExtensionPreferences {
         });
         settings.bind('brightness-keys', keys, 'active', Gio.SettingsBindFlags.DEFAULT);
         monitor.add(keys);
+
+        const guard = new Adw.SwitchRow({
+            title: _('Run scheduled scenarios only while the monitor shows this computer'),
+            subtitle: _('The brightness keys follow the same rule.'),
+        });
+        settings.bind('input-guard', guard, 'active', Gio.SettingsBindFlags.DEFAULT);
+        monitor.add(guard);
+
+        // Entry 0 = not learned yet (-1), then the model's inputs.
+        const inputs = MA320U.spec(Feature.INPUT_SOURCE).choices;
+        const homeRow = new Adw.ComboRow({
+            title: _("This computer's input"),
+            model: Gtk.StringList.new([_('Not learned yet'), ...inputs.map(c => c.label)]),
+        });
+        const syncHome = () => {
+            const value = settings.get_int('home-input');
+            const index = inputs.findIndex(c => c.value === value) + 1; // unknown value -> 0
+            if (homeRow.selected !== index)
+                homeRow.selected = index;
+        };
+        homeRow.connect('notify::selected', () => {
+            const choice = inputs[homeRow.selected - 1];
+            const value = choice ? choice.value : -1;
+            if (settings.get_int('home-input') !== value)
+                settings.set_int('home-input', value);
+        });
+        settings.connect('changed::home-input', syncHome); // also while the extension learns it
+        syncHome();
+        guard.bind_property('active', homeRow, 'sensitive', GObject.BindingFlags.SYNC_CREATE);
+        monitor.add(homeRow);
         page.add(monitor);
         return page;
     }

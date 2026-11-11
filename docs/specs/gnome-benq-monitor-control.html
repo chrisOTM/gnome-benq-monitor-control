@@ -34,8 +34,8 @@
 </head>
 <body>
 <h1>gnome-benq-monitor-control — Design Spec</h1>
-<p class="meta">Status: implemented (v0.1.0) · Date: 2026-10-19 · Author: chrisOTM (with Claude) ·
-Port of <code>linux-desktop/benq-monitor-control</code> v0.1.0 (KDE tray app, PySide6/QML)</p>
+<p class="meta">Status: implemented (v0.2.0) · Date: 2026-11-11 · Author: chrisOTM (with Claude) ·
+Port of <code>_archive/benq-monitor-control</code> v0.1.0 (KDE tray app, PySide6/QML); v0.2.0 follows that app's v0.2.0 audit fixes</p>
 
 <h2>1. Purpose</h2>
 <p>The KDE tray app does not work on GNOME: there is no system tray, and its quick panel relies on
@@ -66,10 +66,10 @@ asynchronously, so the shell never blocks on the I²C bus.</p>
 <table>
   <tr><th>Module</th><th>Responsibility</th><th>Shell imports</th></tr>
   <tr><td><code>lib/model.js</code></td><td>MA320U description: VCP codes, choices, locks.</td><td>no</td></tr>
-  <tr><td><code>lib/ddcutil.js</code></td><td>Parsers for terse output, error classification, async runner with 10 s timeout and one retry.</td><td>no (Gio)</td></tr>
-  <tr><td><code>lib/session.js</code></td><td>Monitor state, serialized job queue (one ddcutil call at a time), verified writes, learned locks, latest-value-wins coalescing for sliders.</td><td>no</td></tr>
+  <tr><td><code>lib/ddcutil.js</code></td><td>Parsers for terse output, error classification, async runner with 10 s timeout and one retry, cancelled on disable; <code>--verify</code> passed explicitly.</td><td>no (Gio)</td></tr>
+  <tr><td><code>lib/session.js</code></td><td>Monitor state, serialized job queue (one ddcutil call at a time), verified writes, learned locks (two rejections in a row, expire after 10 minutes), latest-value-wins coalescing for sliders, fresh read before relative steps.</td><td>no</td></tr>
   <tr><td><code>lib/sun.js</code>, <code>lib/scheduler.js</code>, <code>lib/scenario.js</code></td><td>NOAA sun times, active/next scenario, JSON validation (same format as the KDE app).</td><td>no</td></tr>
-  <tr><td><code>lib/flow.js</code></td><td>Scenario activation, 60 s tick, clock-jump detection, retry after reconnect.</td><td>no (GLib)</td></tr>
+  <tr><td><code>lib/flow.js</code></td><td>Scenario activation (one at a time), 60 s tick, clock-jump detection, input guard, at most three attempts per trigger.</td><td>no (GLib)</td></tr>
   <tr><td><code>lib/i18n.js</code></td><td>Lookup table translations (EN source strings, DE table).</td><td>no</td></tr>
   <tr><td><code>lib/brightnessKeys.js</code></td><td>Brightness key step (1/20 of the maximum, clamped), routing (GNOME only, monitor only, both), DRM → Meta connector name.</td><td>no</td></tr>
   <tr><td><code>ui/indicator.js</code></td><td>Top-bar button and menu.</td><td>yes</td></tr>
@@ -85,8 +85,30 @@ asynchronously, so the shell never blocks on the I²C bus.</p>
   <li><b>Polling:</b> values are read when the menu opens and then every <i>sync interval</i> seconds while it
     stays open. No background polling while closed (the KDE app polled every 5 s permanently).</li>
   <li><b>Reconnect:</b> on <code>monitors-changed</code> (hotplug, input switched back), 3 s and 10 s
-    later, and every 60 s while unreachable (the KDE app retried every 10 s; <code>ddcutil detect</code>
-    probes every bus, which is wasteful on battery).</li>
+    later, and every 60 s while unreachable, but only while a screen other than the laptop's built-in panel is
+    connected (the KDE app retried every 10 s; <code>ddcutil detect</code> probes every bus, which is
+    wasteful on battery). On the laptop alone nothing talks to the bus. With the monitor attached the only
+    background traffic is one short read per minute while the input guard holds a scenario, and one read
+    before a brightness key step.</li>
+  <li><b>Rejected writes:</b> after a rejection the session re-reads all values. If the value arrived anyway,
+    it counts as applied. A control is locked only after the second rejection in a row; a learned lock is
+    forgotten after 10 minutes, when the menu opens, or on <i>Detect again</i>. Static locks (Low Blue Light in
+    sRGB and Display P3, HDR) are unchanged.</li>
+  <li><b>Input guard:</b> the MA320U keeps answering DDC/CI while it shows another computer. Scheduled
+    scenarios (scheduled start, re-apply after login, resume or clock jump, retries) and the brightness keys
+    therefore act only while a fresh read shows this computer's input. A held scenario shows <i>FloW paused —
+    the monitor shows another input</i> in the menu header, is re-checked every minute and applied silently
+    (no applications, no notification) when the input returns. Picking a scenario in the menu and all menu
+    controls always work. This computer's input is learned at first contact, but only if it fits the connector
+    the monitor is found on (USB-C arrives as DisplayPort, so on a DisplayPort connector only USB-C is
+    learned). It can be changed, reset or the guard switched off under <i>General</i>.</li>
+  <li><b>FloW semantics:</b> a scenario picked in the menu stays in effect until the next scheduled start,
+    also across resume and clock jumps. One re-apply per resume. At most three attempts per trigger while the
+    monitor does not answer; a new trigger starts over. No notification when nothing reached the monitor. The
+    offset applies to sunrise and sunset only. Disabling the extension cancels a running ddcutil command and
+    drops queued writes.</li>
+  <li><b>Input switch:</b> the confirmation says the monitor will show another device. The extension keeps its
+    connection, the menu shows the new input and can switch back.</li>
   <li><b>Lock screen:</b> session modes <code>user</code> and <code>unlock-dialog</code>, so scheduled
     scenarios still fire while the screen is locked; the indicator is hidden while locked.</li>
   <li><b>Brightness keys:</b> the extension takes over GNOME's four screen brightness keybindings
@@ -95,7 +117,10 @@ asynchronously, so the shell never blocks on the I²C bus.</p>
     the lock screen. GNOME's original handler (from <code>Main.brightnessManager</code>) runs first and
     steps the laptop panel if one is active. Then the monitor's brightness (VCP 0x10) moves by 1/20 of its
     maximum (5 for 0–100), clamped, based on the latest target (pending or shown value), so a held key
-    coalesces into one pending write. <b>Fn + key</b> steps every screen; <b>Shift + Fn + key</b> steps the
+    coalesces into one pending write. If the last read or write is older than 10 seconds, the current values
+    are read first, so a press steps from the real brightness even if the monitor's own buttons or Brightness
+    Intelligence changed it. While the monitor shows another computer (input guard) the keys do not touch the
+    monitor; GNOME's handler still runs. <b>Fn + key</b> steps every screen; <b>Shift + Fn + key</b> steps the
     monitor only if the logical monitor under the pointer contains its connector (<code>ddcutil detect</code>
     reports <code>card1-DP-1</code>, Meta calls it <code>DP-1</code>), otherwise it is pure delegation to GNOME.
     One combined OSD call shows GNOME's scales plus the monitor's new level immediately. If the monitor is
@@ -112,18 +137,26 @@ asynchronously, so the shell never blocks on the I²C bus.</p>
   <tr><td><code>location-enabled</code>, <code>latitude</code>, <code>longitude</code></td><td>b, d, d</td><td>Location for sun times.</td></tr>
   <tr><td><code>brightness-keys</code></td><td>b (default true)</td><td>Brightness keys also control the monitor; toggles live.</td></tr>
   <tr><td><code>sync-interval</code></td><td>i (2–60)</td><td>Seconds between reads while the menu is open.</td></tr>
+  <tr><td><code>input-guard</code></td><td>b (default true)</td><td>Scheduled scenarios and brightness keys act only while the monitor shows this computer.</td></tr>
+  <tr><td><code>home-input</code></td><td>i (−1..255, default −1)</td><td>VCP 0x60 value of this computer's input; −1 means not learned yet.</td></tr>
 </table>
 
 <h2>6. Safety</h2>
 <p>Unchanged from the KDE app: only the six VCP codes 0xDC, 0x10, 0x62, 0x60, 0x19, 0x81 are written, every
-write except input is verified by ddcutil's read-back, input switches need confirmation.</p>
+write except input is verified by ddcutil's read-back (<code>--verify</code> is passed explicitly), input switches need confirmation.
+A range value is never written without a known maximum: brightness is pinned to 100, Low Blue Light to 5, volume uses the
+maximum the monitor reports.</p>
+<p>Preferences keep invalid scenario entries in the stored JSON when they save; an <code>open_app</code> desktop id must be a plain file name.</p>
 
 <h2>7. Verification</h2>
 <ul class="check">
-  <li><input type="checkbox" checked disabled> Unit tests for parsers, sun times (against the Python implementation), scheduler, scenario validation, session, brightness key step and routing.</li>
+  <li><input type="checkbox" checked disabled> Unit tests for parsers, sun times (against the Python implementation), scheduler, scenario validation, session, brightness key step and routing, FlowService with input guard, retries and resume, session lock learning, fresh read before key steps, runCommand timeout and cancel (70 tests).</li>
   <li><input type="checkbox" checked disabled> Live: menu controls on the MA320U after log-out/in (2026-10-19).</li>
   <li><input type="checkbox" checked disabled> Live: brightness keys change the MA320U after log-out/in (2026-10-19).</li>
-  <li><input type="checkbox" disabled> Live: scheduled scenario fires, re-apply after resume.</li>
+  <li><input type="checkbox" disabled> Live: scheduled scenario fires.</li>
+  <li><input type="checkbox" disabled> Live: re-apply after resume.</li>
+  <li><input type="checkbox" disabled> Live: input guard holds and releases.</li>
+  <li><input type="checkbox" disabled> Live: brightness keys after the monitor changed its own brightness.</li>
 </ul>
 </body>
 </html>

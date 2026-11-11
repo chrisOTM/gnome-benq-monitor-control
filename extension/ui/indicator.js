@@ -114,7 +114,7 @@ class ConfirmInputDialog extends ModalDialog.ModalDialog {
         super._init({styleClass: 'benq-confirm-dialog'});
         this.contentLayout.add_child(new Dialog.MessageDialogContent({
             title: fmt('Switch to %1?', inputLabel),
-            description: _('This computer loses control of the monitor until you switch back.'),
+            description: _('The monitor will show another device.'),
         }));
         this.setButtons([
             {label: _('Cancel'), action: () => this.close(), key: Clutter.KEY_Escape},
@@ -144,6 +144,7 @@ class MonitorIndicator extends PanelMenu.Button {
         this._hintTimer = 0;
         this._transientHint = '';
         this._syncing = false;
+        this._dialog = null;
 
         this._icon = new St.Icon({icon_name: 'video-display-symbolic', style_class: 'system-status-icon'});
         this.add_child(this._icon);
@@ -174,7 +175,7 @@ class MonitorIndicator extends PanelMenu.Button {
         this._hint.label.clutter_text.line_wrap = true;
         menu.addMenuItem(this._hint);
 
-        this._redetect = new StayOpenItem(_('Detect again'), () => this._controller.detect());
+        this._redetect = new StayOpenItem(_('Detect again'), () => this._controller.redetect());
         menu.addMenuItem(this._redetect);
 
         // Picture mode
@@ -260,7 +261,12 @@ class MonitorIndicator extends PanelMenu.Button {
     _confirmInput(choice) {
         if (choice.value === this._controller.value(Feature.INPUT_SOURCE))
             return;
-        new ConfirmInputDialog(choice.label, () => this._set(Feature.INPUT_SOURCE, choice.value)).open();
+        this._dialog?.destroy();
+        this._dialog = new ConfirmInputDialog(choice.label, () => this._set(Feature.INPUT_SOURCE, choice.value));
+        this._dialog.connect('destroy', () => {
+            this._dialog = null;
+        });
+        this._dialog.open();
     }
 
     _onOpenStateChanged(open) {
@@ -371,7 +377,9 @@ class MonitorIndicator extends PanelMenu.Button {
     _syncFlow() {
         const active = this._flow.active;
         const next = this._flow.next;
-        if (active && next)
+        if (this._flow.paused)
+            this._flowHeader.label.text = _('FloW paused — the monitor shows another input');
+        else if (active && next)
             this._flowHeader.label.text = fmt('FloW: %1 until %2', active.name, formatTime(next.start));
         else if (active)
             this._flowHeader.label.text = fmt('FloW: %1', active.name);
@@ -401,6 +409,7 @@ class MonitorIndicator extends PanelMenu.Button {
             this._controller.disconnect(id);
         this._flow.disconnect(this._flowId);
         this._nightLight.disconnect(this._nightLightId);
+        this._dialog?.destroy(); // an open confirmation must not outlive the extension
         super.destroy();
     }
 });
