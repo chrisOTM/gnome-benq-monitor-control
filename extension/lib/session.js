@@ -3,7 +3,7 @@
 
 import GLib from 'gi://GLib';
 
-import {DdcUnavailable, Unreachable, WriteRejected} from './ddcutil.js';
+import {DdcUnavailable, Unreachable, WriteRejected, errorDetail} from './ddcutil.js';
 import {Emitter} from './emitter.js';
 import {Feature, Kind} from './model.js';
 
@@ -177,8 +177,9 @@ export class MonitorSession {
     // on the monitor itself, and the write may have arrived although the read-back failed.
     async _rejected(spec, feature, value, error) {
         const modeBefore = this.mode;
-        const detail = String(error.message ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
-        console.log(`benq-monitor-control: monitor rejected ${feature}=${value} in mode ${modeBefore}: ${detail}`);
+        const valueBefore = this._values.get(feature);
+        console.log(`benq-monitor-control: monitor rejected ${feature}=${value} in mode ${modeBefore}: ` +
+            errorDetail(error.message));
         await this._read(this.model.codes());
         if (this._handle === null)
             return ApplyResult.UNREACHABLE;
@@ -189,6 +190,11 @@ export class MonitorSession {
         }
         if (this.model.isLocked(feature, this.mode))
             return ApplyResult.LOCKED;
+        if (spec.kind === Kind.RANGE) {
+            const neighbour = await this._tryNeighbour(spec, feature, value, valueBefore);
+            if (neighbour !== null)
+                return neighbour;
+        }
         if (!NOT_LEARNED.has(feature)) {
             const count = (this._rejections.get(key) ?? 0) + 1;
             this._rejections.set(key, count);
@@ -196,6 +202,39 @@ export class MonitorSession {
                 this._learned.set(key, this._clock());
         }
         return ApplyResult.REJECTED;
+    }
+
+    // Some single values are refused while their neighbours are accepted: with Brightness
+    // Intelligence on, the MA320U refuses brightness 70 and keeps the old value (measured
+    // 2026-11-12). One step further in the same direction is close enough for a slider or a
+    // key step. Runs inside the current queue job, so it calls the backend directly.
+    // @returns {Promise<string|null>} an ApplyResult, or null when the neighbour was refused too
+    async _tryNeighbour(spec, feature, value, valueBefore) {
+        const maximum = this._maxima.get(feature) ?? spec.maximum;
+        const direction = valueBefore !== undefined && valueBefore < value ? 1 : -1;
+        const neighbour = [value + direction, value - direction]
+            .find(v => spec.minimum <= v && v <= maximum);
+        if (neighbour === undefined)
+            return null;
+        try {
+            await this.backend.write(this._handle, spec.code, neighbour, true);
+        } catch (e) {
+            if (e instanceof WriteRejected)
+                return null;
+            if (e instanceof Unreachable) {
+                this._handle = null;
+                return ApplyResult.UNREACHABLE;
+            }
+            if (e instanceof DdcUnavailable) {
+                this._fail(e);
+                return ApplyResult.UNREACHABLE;
+            }
+            throw e;
+        }
+        console.log(`benq-monitor-control: wrote ${feature}=${neighbour} instead`);
+        this._rejections.delete(`${this.mode}/${feature}`);
+        this._values.set(feature, neighbour);
+        return ApplyResult.APPLIED;
     }
 
     async _read(codes) {

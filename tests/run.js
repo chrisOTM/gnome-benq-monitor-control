@@ -6,7 +6,7 @@ import GLib from 'gi://GLib';
 import System from 'system';
 
 import {Direction, Scope, connectorName, otherInputShown, route, stepValue} from '../extension/lib/brightnessKeys.js';
-import {DdcutilCli, Unreachable, WriteRejected, classifyError, ErrorKind, parseDetectTerse, parseGetvcpTerse, runCommand} from '../extension/lib/ddcutil.js';
+import {DdcutilCli, Unreachable, WriteRejected, classifyError, ErrorKind, parseDetectTerse, parseGetvcpTerse, runCommand, errorDetail} from '../extension/lib/ddcutil.js';
 import {FlowService, runActivation} from '../extension/lib/flow.js';
 import {fmt, setLanguage} from '../extension/lib/i18n.js';
 import {Feature, MA320U} from '../extension/lib/model.js';
@@ -119,6 +119,7 @@ class FakeBackend {
         this.writes = [];
         this.reads = 0;
         this.rejectNext = 0; // the next N writes are rejected whatever the mode
+        this.refuse = new Set(); // `${code}/${value}` the monitor refuses, the old value stays
         this.noMaximum = new Set(); // codes whose maximum the monitor does not report
     }
 
@@ -138,6 +139,8 @@ class FakeBackend {
 
     write(_handle, code, value) {
         this.writes.push([code, value]);
+        if (this.refuse.has(`${code}/${value}`))
+            return Promise.reject(new WriteRejected('Verification failed for feature 10'));
         if (this.rejectNext > 0) {
             this.rejectNext--;
             return Promise.reject(new WriteRejected('Verification failed'));
@@ -189,14 +192,14 @@ test('session: one rejection does not lock, the second consecutive one does, a s
     backend.values.set(0xDC, 0x12);
     const session = new MonitorSession(backend, MA320U);
     await session.connect();
-    backend.rejectNext = 1;
+    backend.rejectNext = 2; // the value and its neighbour
     assertEqual(await session.apply(Feature.BRIGHTNESS, 50), ApplyResult.REJECTED);
     assert(!session.isLocked(Feature.BRIGHTNESS));
     assertEqual(await session.apply(Feature.BRIGHTNESS, 50), ApplyResult.APPLIED, 'still writable');
-    backend.rejectNext = 1;
+    backend.rejectNext = 2;
     assertEqual(await session.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
     assert(!session.isLocked(Feature.BRIGHTNESS), 'the success reset the count');
-    backend.rejectNext = 1;
+    backend.rejectNext = 2;
     assertEqual(await session.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
     assert(session.isLocked(Feature.BRIGHTNESS), 'second consecutive rejection');
     assertEqual(await session.apply(Feature.BRIGHTNESS, 60), ApplyResult.LOCKED);
@@ -217,7 +220,7 @@ test('session: a learned lock expires after the TTL', async () => {
     let now = 0;
     const session = new MonitorSession(backend, MA320U, {clock: () => now, learnedLockTtlMs: 1000});
     await session.connect();
-    backend.rejectNext = 2;
+    backend.rejectNext = 4; // two rejections, each with its neighbour
     await session.apply(Feature.BRIGHTNESS, 50);
     await session.apply(Feature.BRIGHTNESS, 50);
     assert(session.isLocked(Feature.BRIGHTNESS));
@@ -232,7 +235,7 @@ test('session: forgetLearnedLocks clears locks and rejection counts', async () =
     const backend = new FakeBackend();
     const session = new MonitorSession(backend, MA320U);
     await session.connect();
-    backend.rejectNext = 2;
+    backend.rejectNext = 4;
     await session.apply(Feature.BRIGHTNESS, 50);
     await session.apply(Feature.BRIGHTNESS, 50);
     assert(session.isLocked(Feature.BRIGHTNESS));
@@ -240,7 +243,7 @@ test('session: forgetLearnedLocks clears locks and rejection counts', async () =
     session.forgetLearnedLocks();
     assert(!session.isLocked(Feature.BRIGHTNESS));
     assertEqual(backend.reads, reads, 'no bus traffic');
-    backend.rejectNext = 1;
+    backend.rejectNext = 2;
     await session.apply(Feature.BRIGHTNESS, 50);
     assert(!session.isLocked(Feature.BRIGHTNESS), 'the count starts again');
 });
@@ -405,7 +408,7 @@ test('controller: redetect and refresh forget learned locks, detect does not', a
     const controller = new MonitorController(session);
     await controller.detect();
     const learn = async () => {
-        backend.rejectNext = 2;
+        backend.rejectNext = 4;
         await controller.apply(Feature.BRIGHTNESS, 50);
         await controller.apply(Feature.BRIGHTNESS, 50);
         assert(session.isLocked(Feature.BRIGHTNESS));
@@ -1086,13 +1089,64 @@ test('controller: isLocked is live, so a learned lock expires for the keys witho
     const session = new MonitorSession(backend, MA320U, {clock: () => now, learnedLockTtlMs: 1000});
     const controller = new MonitorController(session, {clock: () => now});
     await controller.detect();
-    backend.rejectNext = 2;
+    backend.rejectNext = 4;
     assertEqual(await controller.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
     assertEqual(await controller.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
     assert(controller.isLocked(Feature.BRIGHTNESS), 'locked after two rejections');
     now += 1001; // nothing reads, writes or publishes in between
     assert(controller.snapshot.locked.get(Feature.BRIGHTNESS), 'the cached snapshot still says locked');
     assert(!controller.isLocked(Feature.BRIGHTNESS), 'the live query sees the expiry');
+});
+
+test('session: a single refused range value is replaced by its neighbour in the step direction', async () => {
+    // Measured 2026-11-12: with Brightness Intelligence on, the MA320U refuses brightness 70
+    // (0x46) and keeps the old value; 69 and 71 are accepted.
+    const backend = new FakeBackend();
+    backend.refuse.add(`${0x10}/70`);
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect(); // brightness 75
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 70), ApplyResult.APPLIED, 'stepping down');
+    assertEqual([backend.values.get(0x10), session.snapshot().values.get(Feature.BRIGHTNESS)], [69, 69]);
+    backend.values.set(0x10, 65);
+    await session.readAll();
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 70), ApplyResult.APPLIED, 'stepping up');
+    assertEqual(backend.values.get(0x10), 71);
+    for (let i = 0; i < 3; i++)
+        await session.apply(Feature.BRIGHTNESS, 70); // eslint-disable-line no-await-in-loop
+    assert(!session.isLocked(Feature.BRIGHTNESS), 'a refused value never locks the control');
+});
+
+test('session: the neighbour is tried inside the range and only for range features', async () => {
+    const backend = new FakeBackend();
+    backend.refuse.add(`${0x10}/100`);
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect(); // 75
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 100), ApplyResult.APPLIED);
+    assertEqual(backend.values.get(0x10), 99, 'the maximum falls back below');
+    backend.refuse.add(`${0x10}/0`);
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 0), ApplyResult.APPLIED);
+    assertEqual(backend.values.get(0x10), 1, 'the minimum falls back above');
+    backend.refuse.add(`${0x81}/1`);
+    const writes = backend.writes.length;
+    assertEqual(await session.apply(Feature.BRIGHTNESS_INTELLIGENCE, 1), ApplyResult.REJECTED);
+    assertEqual(backend.writes.length, writes + 1, 'no neighbour for a toggle');
+});
+
+test('session: when the neighbour is refused too, the rejection counts as before', async () => {
+    const backend = new FakeBackend();
+    backend.reject.add(`${0x0F}/${0x10}`); // every brightness value refused in this mode
+    const session = new MonitorSession(backend, MA320U);
+    await session.connect();
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
+    assertEqual(backend.writes.length, 2, 'one neighbour attempt');
+    assertEqual(await session.apply(Feature.BRIGHTNESS, 60), ApplyResult.REJECTED);
+    assert(session.isLocked(Feature.BRIGHTNESS), 'learned after the second rejection');
+});
+
+test('ddcutil error details drop its trace lines', () => {
+    const trace = '(ddc_write_only_with_retry     ) Starting  \n(ddc_write_only_with_retry     ) Done      Returning: NULL. \n' +
+        'Verification failed for feature 10\n    Try errors: DDCRC_VERIFY\n';
+    assertEqual(errorDetail(trace), 'Verification failed for feature 10 · Try errors: DDCRC_VERIFY');
 });
 
 // --- runner --------------------------------------------------------------

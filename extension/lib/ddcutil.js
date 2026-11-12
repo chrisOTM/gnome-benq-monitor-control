@@ -89,6 +89,15 @@ export const ErrorKind = Object.freeze({
     OTHER: 'other',
 });
 
+/** ddcutil's message without its trace lines ("(ddc_write_only_with_retry ) Starting"), on one line. */
+export function errorDetail(text) {
+    return String(text ?? '').split('\n')
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('('))
+        .join(' · ')
+        .slice(0, 300);
+}
+
 export function classifyError(text) {
     const t = text.toLowerCase();
     if (t.includes('verification failed'))

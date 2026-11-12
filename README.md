@@ -42,12 +42,17 @@ eye-care settings. After a rejected write the extension re-reads all values; if 
 arrived anyway, it counts as applied. A control is locked only after the second rejection in
 a row, and the control then snaps back. Such a learned lock is forgotten after 10 minutes,
 when the menu is opened, or with *Detect again*. The static locks (Low Blue Light in sRGB and
-Display P3, HDR) stay.
+Display P3, HDR) stay. If the monitor refuses a single value of a slider, the next value in
+the same direction is written instead: with Brightness Intelligence on, the MA320U refuses
+brightness 70 but accepts 69 and 71.
 
 **Brightness Intelligence** is BenQ's automatic brightness. The MA320U has a built-in
-ambient light sensor and adjusts its brightness to the room light over the day. While it is
-on, the monitor may override the brightness slider; the slider follows the next time the
-menu opens.
+ambient light sensor and adjusts its brightness to the room light; the control loop runs in
+the monitor, the extension only switches it on and off (VCP 0x81). Switching it on moves the
+brightness to the room level within seconds, and the brightness value the monitor reports
+follows. A brightness you set while it is on is accepted; the monitor may move it again
+when the room light changes. The slider shows the monitor's value when the menu opens, and the brightness keys
+read it before a step, so they step from where the monitor actually is.
 
 **Night Light hint:** GNOME Night Light warms the picture before it leaves the computer, and
 the monitor's Low Blue Light filters blue inside the monitor. While both are active they add
