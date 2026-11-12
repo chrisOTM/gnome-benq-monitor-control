@@ -93,7 +93,10 @@ asynchronously, so the shell never blocks on the I²C bus.</p>
   <li><b>Rejected writes:</b> after a rejection the session re-reads all values. If the value arrived anyway,
     it counts as applied. A control is locked only after the second rejection in a row; a learned lock is
     forgotten after 10 minutes, when the menu opens, or on <i>Detect again</i>. Static locks (Low Blue Light in
-    sRGB and Display P3, HDR) are unchanged.</li>
+    sRGB and Display P3, HDR) are unchanged. For a range feature whose value was refused while the old value
+    stayed, the next value in the same direction is written once (measured 2026-11-12: with Brightness
+    Intelligence on, the MA320U refuses brightness 70 and accepts 69 and 71; with it off, 70 is accepted).
+    Only when that is refused too does the rejection count.</li>
   <li><b>Input guard:</b> the MA320U keeps answering DDC/CI while it shows another computer. Scheduled
     scenarios (scheduled start, re-apply after login, resume or clock jump, retries) and the brightness keys
     therefore act only while a fresh read shows this computer's input. A held scenario shows <i>FloW paused —
@@ -150,13 +153,14 @@ maximum the monitor reports.</p>
 
 <h2>7. Verification</h2>
 <ul class="check">
-  <li><input type="checkbox" checked disabled> Unit tests for parsers, sun times (against the Python implementation), scheduler, scenario validation, session, brightness key step and routing, FlowService with input guard, retries and resume, session lock learning, fresh read before key steps, runCommand timeout and cancel (70 tests).</li>
+  <li><input type="checkbox" checked disabled> Unit tests for parsers, sun times (against the Python implementation), scheduler, scenario validation, session, brightness key step and routing, FlowService with input guard, retries and resume, session lock learning, fresh read before key steps, runCommand timeout and cancel (74 tests).</li>
   <li><input type="checkbox" checked disabled> Live: menu controls on the MA320U after log-out/in (2026-10-19).</li>
   <li><input type="checkbox" checked disabled> Live: brightness keys change the MA320U after log-out/in (2026-10-19).</li>
-  <li><input type="checkbox" disabled> Live: scheduled scenario fires.</li>
-  <li><input type="checkbox" disabled> Live: re-apply after resume.</li>
-  <li><input type="checkbox" disabled> Live: input guard holds and releases.</li>
-  <li><input type="checkbox" disabled> Live: brightness keys after the monitor changed its own brightness.</li>
+  <li><input type="checkbox" checked disabled> Live (v0.2.0, 2026-11-12): scheduled scenario fires.</li>
+  <li><input type="checkbox" checked disabled> Live (v0.2.0, 2026-11-12): re-apply after resume.</li>
+  <li><input type="checkbox" checked disabled> Live (v0.2.0, 2026-11-12): brightness keys after the monitor changed its own brightness.</li>
+  <li><input type="checkbox" checked disabled> Live (v0.2.0, 2026-11-12): unplug and replug the monitor; this computer's input learned as USB-C.</li>
+  <li><input type="checkbox" disabled> Live: input guard holds and releases (needs a second computer on another input).</li>
 </ul>
 </body>
 </html>
